@@ -17,12 +17,42 @@ import pandas as pd
 import streamlit as st
 
 # ─────────────────────────────────────────────
-# PATHS
+# PATHS  —  checked in priority order
 # ─────────────────────────────────────────────
 
-BASE_DIR      = Path(__file__).parent
-TEMPLATE_PATH = BASE_DIR / "src" / "Equipment Accountability Form (Work From Home).dotx"
-LOGO_PATH     = BASE_DIR / "images" / "logo.png"
+def _find_template() -> Path | None:
+    """
+    Search for the .dotx template in several locations so the app works both
+    locally and on Streamlit Cloud regardless of working-directory quirks.
+    """
+    candidates = [
+        # 1. Sibling src/ folder next to this script
+        Path(__file__).parent / "src" / "Equipment Accountability Form (Work From Home).dotx",
+        # 2. src/ relative to cwd (Streamlit Cloud often runs from repo root)
+        Path.cwd() / "src" / "Equipment Accountability Form (Work From Home).dotx",
+        # 3. Same folder as this script
+        Path(__file__).parent / "Equipment Accountability Form (Work From Home).dotx",
+        # 4. cwd directly
+        Path.cwd() / "Equipment Accountability Form (Work From Home).dotx",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+def _find_logo() -> Path | None:
+    candidates = [
+        Path(__file__).parent / "images" / "logo.png",
+        Path.cwd() / "images" / "logo.png",
+        Path(__file__).parent / "logo.png",
+        Path.cwd() / "logo.png",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+LOGO_PATH = _find_logo()
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -38,7 +68,7 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 
 def get_logo_b64() -> str:
-    if LOGO_PATH.exists():
+    if LOGO_PATH and LOGO_PATH.exists():
         return base64.b64encode(LOGO_PATH.read_bytes()).decode()
     return ""
 
@@ -354,6 +384,19 @@ CSV_COLUMNS = {
     "remarks":        "Remark(s)",
 }
 
+# SharePoint exports people-column sub-fields as "Column Name:SubField".
+# These suffixes (lowercased, after the colon) identify a position/job-title column.
+_POSITION_SP_SUFFIXES = (
+    ":position",
+    ":jobtitle",
+    ":job title",
+    ":title",
+    ":designation",
+)
+
+# Fallback: plain keyword fragments anywhere in the column name.
+_POSITION_KEYWORDS = ("position", "job title", "jobtitle", "designation")
+
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 # ─────────────────────────────────────────────
@@ -389,8 +432,53 @@ def detect_columns(df: pd.DataFrame) -> dict:
             result[key] = matches[0] if matches else None
     return result
 
-def get_template_path() -> Path | None:
-    return TEMPLATE_PATH if TEMPLATE_PATH.exists() else None
+def detect_position_column(df: pd.DataFrame) -> str | None:
+    """
+    Return the best column name to use for Position/Job Title, or None.
+
+    Priority:
+      1. SharePoint ":sub-field" suffix  — e.g. "Current User:Position"
+      2. Keyword anywhere in column name — e.g. "Position", "Job Title"
+    """
+    cols = [str(c) for c in df.columns]
+
+    # Priority 1 — SharePoint colon-suffix
+    for col in cols:
+        col_l = col.lower()
+        for suffix in _POSITION_SP_SUFFIXES:
+            if col_l.endswith(suffix):
+                return col
+
+    # Priority 2 — keyword scan
+    for col in cols:
+        col_l = col.lower()
+        for kw in _POSITION_KEYWORDS:
+            if kw in col_l:
+                return col
+
+    return None
+
+def get_position_value(row, df_columns, position_col) -> str:
+    """
+    Extract position value from a row using multiple strategies
+    """
+    if position_col and position_col in df_columns:
+        return safe_str(row.get(position_col, ""))
+    
+    # Fallback: scan all columns for position-related content
+    for col in df_columns:
+        col_lower = col.lower()
+        if any(kw in col_lower for kw in _POSITION_KEYWORDS):
+            val = safe_str(row.get(col, ""))
+            if val:
+                return val
+        # Also check for colon-suffix pattern in column name
+        if any(col_lower.endswith(suffix) for suffix in _POSITION_SP_SUFFIXES):
+            val = safe_str(row.get(col, ""))
+            if val:
+                return val
+    
+    return ""
 
 # ─────────────────────────────────────────────
 # SMART SEARCH
@@ -605,9 +693,13 @@ def _fill_equipment_row(row_el, equipment, serial, asset_tag, remarks):
         _set_cell_text(cell, text)
 
 def fill_template(assets_df, col_map, employee_name, client, position, date_str) -> bytes:
-    tpl = get_template_path()
+    tpl = _find_template()
     if tpl is None:
-        raise FileNotFoundError("Template .dotx not found.")
+        raise FileNotFoundError(
+            "Template (.dotx) not found. "
+            f"Searched: {Path(__file__).parent / 'src'}, {Path.cwd() / 'src'}, and their parents. "
+            "Make sure 'Equipment Accountability Form (Work From Home).dotx' is inside the src/ folder."
+        )
     with zipfile.ZipFile(io.BytesIO(tpl.read_bytes())) as zin:
         files = {n: zin.read(n) for n in zin.namelist()}
     if "[Content_Types].xml" in files:
@@ -698,6 +790,15 @@ def step_close():
 def main():
     render_header()
 
+    # ── Template status banner ────────────────
+    tpl_path = _find_template()
+    if tpl_path is None:
+        st.error(
+            "⚠️ Word template not found. "
+            "Place **Equipment Accountability Form (Work From Home).dotx** inside the **src/** folder "
+            "next to this script, then refresh the page."
+        )
+
     # ── Step 1: Upload ────────────────────────
     step_open(1, "Upload Asset List",
               "Export your SharePoint asset list as CSV (Export → Export to CSV) and upload it below.")
@@ -728,8 +829,9 @@ def main():
         key: (auto.get(key) if auto.get(key) and auto[key] in df.columns else None)
         for key in CSV_COLUMNS
     }
-    user_col   = col_map.get("current_user")
-    client_col = col_map.get("client")
+    user_col     = col_map.get("current_user")
+    client_col   = col_map.get("client")
+    position_col = detect_position_column(df)
 
     if not user_col:
         st.error('Could not find a "Current User" column. Make sure your CSV was exported from SharePoint with standard column names.')
@@ -870,14 +972,21 @@ def main():
     step_open(4, "Form Details",
               "These fields appear in the header of the generated document. Edit as needed.")
 
-    default_client, default_pos = "", ""
+    default_client = ""
+    default_pos = ""
+
     if not df_selected.empty:
-        if client_col:
+        # Client
+        if client_col and client_col in df_selected.columns:
             default_client = safe_str(df_selected.iloc[0].get(client_col, ""))
-        for c in df_selected.columns:
-            if any(kw in c.lower() for kw in ("position", "job title", "designation")):
-                default_pos = safe_str(df_selected.iloc[0].get(c, ""))
-                break
+
+        # Position - use the enhanced position detection
+        if position_col:
+            default_pos = safe_str(df_selected.iloc[0].get(position_col, ""))
+        
+        # If still empty, try the comprehensive detection
+        if not default_pos:
+            default_pos = get_position_value(df_selected.iloc[0], df_selected.columns, None)
 
     f1, f2 = st.columns(2)
     with f1:
@@ -885,7 +994,7 @@ def main():
         form_client   = st.text_input("Client",    value=default_client)
     with f2:
         form_position = st.text_input("Position",  value=default_pos)
-        form_date     = st.date_input("Date",      value=datetime.today())
+        form_date     = st.date_input("Date",       value=datetime.today())
 
     step_close()
     form_date_str = form_date.strftime("%B %d, %Y")
@@ -893,9 +1002,11 @@ def main():
     # ── Step 5: Generate ──────────────────────
     step_open(5, "Generate Document", "")
 
-    tpl = get_template_path()
-    if tpl is None:
-        st.error("Word template (.dotx) not found. Make sure the file is inside the src/ folder.")
+    if tpl_path is None:
+        st.error(
+            "Cannot generate — template not found. "
+            "Place the .dotx file in the **src/** folder and refresh."
+        )
         step_close()
         return
 
