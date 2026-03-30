@@ -21,18 +21,10 @@ import streamlit as st
 # ─────────────────────────────────────────────
 
 def _find_template() -> Path | None:
-    """
-    Search for the .dotx template in several locations so the app works both
-    locally and on Streamlit Cloud regardless of working-directory quirks.
-    """
     candidates = [
-        # 1. Sibling src/ folder next to this script
         Path(__file__).parent / "src" / "Equipment Accountability Form (Work From Home).dotx",
-        # 2. src/ relative to cwd (Streamlit Cloud often runs from repo root)
         Path.cwd() / "src" / "Equipment Accountability Form (Work From Home).dotx",
-        # 3. Same folder as this script
         Path(__file__).parent / "Equipment Accountability Form (Work From Home).dotx",
-        # 4. cwd directly
         Path.cwd() / "Equipment Accountability Form (Work From Home).dotx",
     ]
     for p in candidates:
@@ -385,7 +377,6 @@ CSV_COLUMNS = {
 }
 
 # SharePoint exports people-column sub-fields as "Column Name:SubField".
-# These suffixes (lowercased, after the colon) identify a position/job-title column.
 _POSITION_SP_SUFFIXES = (
     ":position",
     ":jobtitle",
@@ -395,9 +386,21 @@ _POSITION_SP_SUFFIXES = (
 )
 
 # Fallback: plain keyword fragments anywhere in the column name.
-_POSITION_KEYWORDS = ("position", "job title", "jobtitle", "designation")
+_POSITION_KEYWORDS = ("position", "job title", "jobtitle", "designation", "title")
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+# Possible SDT tag names used for Position in the Word template.
+# We try all of them so the code is resilient to template variations.
+_POSITION_SDT_TAGS = (
+    "Position",
+    "position",
+    "EmployeePosition",
+    "JobTitle",
+    "Job Title",
+    "Designation",
+    "designation",
+)
 
 # ─────────────────────────────────────────────
 # DATA HELPERS
@@ -438,7 +441,8 @@ def detect_position_column(df: pd.DataFrame) -> str | None:
 
     Priority:
       1. SharePoint ":sub-field" suffix  — e.g. "Current User:Position"
-      2. Keyword anywhere in column name — e.g. "Position", "Job Title"
+      2. Exact match for common names    — e.g. "Position", "Job Title"
+      3. Keyword anywhere in column name
     """
     cols = [str(c) for c in df.columns]
 
@@ -449,35 +453,48 @@ def detect_position_column(df: pd.DataFrame) -> str | None:
             if col_l.endswith(suffix):
                 return col
 
-    # Priority 2 — keyword scan
+    # Priority 2 — exact common names (case-insensitive)
+    exact_names = ("position", "job title", "jobtitle", "designation", "title", "role")
+    for col in cols:
+        if col.lower() in exact_names:
+            return col
+
+    # Priority 3 — keyword scan (avoid matching unrelated columns like "acquisition date")
     for col in cols:
         col_l = col.lower()
-        for kw in _POSITION_KEYWORDS:
+        for kw in ("position", "job title", "jobtitle", "designation"):
             if kw in col_l:
                 return col
 
     return None
 
-def get_position_value(row, df_columns, position_col) -> str:
+def get_position_value(row, df_columns, position_col: str | None) -> str:
     """
-    Extract position value from a row using multiple strategies
+    Extract position/job-title from a row using multiple strategies.
+    Returns the first non-empty value found.
     """
+    # Strategy 1: use the detected position column directly
     if position_col and position_col in df_columns:
-        return safe_str(row.get(position_col, ""))
-    
-    # Fallback: scan all columns for position-related content
+        val = safe_str(row.get(position_col, ""))
+        if val:
+            return val
+
+    # Strategy 2: scan ALL columns for position-related names
     for col in df_columns:
         col_lower = col.lower()
-        if any(kw in col_lower for kw in _POSITION_KEYWORDS):
-            val = safe_str(row.get(col, ""))
-            if val:
-                return val
-        # Also check for colon-suffix pattern in column name
+
+        # Check colon-suffix pattern (SharePoint)
         if any(col_lower.endswith(suffix) for suffix in _POSITION_SP_SUFFIXES):
             val = safe_str(row.get(col, ""))
             if val:
                 return val
-    
+
+        # Check keyword in column name
+        if any(kw in col_lower for kw in ("position", "job title", "jobtitle", "designation")):
+            val = safe_str(row.get(col, ""))
+            if val:
+                return val
+
     return ""
 
 # ─────────────────────────────────────────────
@@ -550,6 +567,24 @@ def smart_search(df: pd.DataFrame, user_col: str, query: str):
     return scored, df_by_name
 
 # ─────────────────────────────────────────────
+# WORD TEMPLATE — SDT INTROSPECTION
+# ─────────────────────────────────────────────
+
+def _list_sdt_tags(body) -> list[str]:
+    """Return all SDT tag values found in the document body (for debugging)."""
+    tags = []
+    for sdt in body.iter(f"{{{W}}}sdt"):
+        sdtPr = sdt.find(f"{{{W}}}sdtPr")
+        if sdtPr is None:
+            continue
+        tag_el = sdtPr.find(f"{{{W}}}tag")
+        if tag_el is not None:
+            val = tag_el.get(f"{{{W}}}val", "")
+            if val:
+                tags.append(val)
+    return tags
+
+# ─────────────────────────────────────────────
 # WORD TEMPLATE FILLER
 # ─────────────────────────────────────────────
 
@@ -560,16 +595,26 @@ _FONT_NAME  = "Times New Roman"
 _FONT_SIZE  = "20"
 _TABLE_SIZE = "18"
 
-def _make_rPr(bold: bool = False, size: str = _FONT_SIZE) -> etree._Element:
+def _make_rPr(bold: bool = False, size: str = _FONT_SIZE, theme_font: bool = False) -> etree._Element:
+    """
+    Build a run properties element.
+    theme_font=True  → use minorHAnsi (Calibri Body) to match the template label style.
+    theme_font=False → use the explicit _FONT_NAME (Times New Roman) for table cells.
+    """
     rPr = etree.Element(f"{{{W}}}rPr")
     if bold:
         etree.SubElement(rPr, f"{{{W}}}b")
         etree.SubElement(rPr, f"{{{W}}}bCs")
     fonts = etree.SubElement(rPr, f"{{{W}}}rFonts")
-    fonts.set(f"{{{W}}}ascii",     _FONT_NAME)
-    fonts.set(f"{{{W}}}hAnsi",    _FONT_NAME)
-    fonts.set(f"{{{W}}}cs",       _FONT_NAME)
-    fonts.set(f"{{{W}}}eastAsia", _FONT_NAME)
+    if theme_font:
+        fonts.set(f"{{{W}}}asciiTheme", "minorHAnsi")
+        fonts.set(f"{{{W}}}hAnsiTheme", "minorHAnsi")
+        fonts.set(f"{{{W}}}cstheme",    "minorHAnsi")
+    else:
+        fonts.set(f"{{{W}}}ascii",     _FONT_NAME)
+        fonts.set(f"{{{W}}}hAnsi",    _FONT_NAME)
+        fonts.set(f"{{{W}}}cs",       _FONT_NAME)
+        fonts.set(f"{{{W}}}eastAsia", _FONT_NAME)
     sz   = etree.SubElement(rPr, f"{{{W}}}sz");   sz.set(f"{{{W}}}val",   size)
     szCs = etree.SubElement(rPr, f"{{{W}}}szCs"); szCs.set(f"{{{W}}}val", size)
     return rPr
@@ -595,6 +640,10 @@ def _patch_app_xml(data: bytes) -> bytes:
         return data
 
 def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True) -> bool:
+    """
+    Find the SDT with the given tag and set its text content.
+    Returns True if the SDT was found and updated, False otherwise.
+    """
     for sdt in body.iter(f"{{{W}}}sdt"):
         sdtPr = sdt.find(f"{{{W}}}sdtPr")
         if sdtPr is None:
@@ -615,6 +664,128 @@ def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True) -> bool
         r.append(_make_rPr(bold=bold, size=_FONT_SIZE))
         r.append(_make_t(new_text))
         return True
+    return False
+
+def _set_sdt_value_by_alias(body, tag_aliases: tuple | list, new_text: str, bold: bool = True) -> bool:
+    """
+    Try multiple SDT tag names (aliases) and set the first one found.
+    Returns True if any alias matched.
+    """
+    for alias in tag_aliases:
+        if _set_sdt_value(body, alias, new_text, bold=bold):
+            return True
+    return False
+
+def _set_sdt_value_fuzzy(body, keyword: str, new_text: str, bold: bool = True) -> bool:
+    """
+    Last-resort: find an SDT whose tag contains keyword (case-insensitive)
+    and set its value.
+    """
+    for sdt in body.iter(f"{{{W}}}sdt"):
+        sdtPr = sdt.find(f"{{{W}}}sdtPr")
+        if sdtPr is None:
+            continue
+        tag_el = sdtPr.find(f"{{{W}}}tag")
+        if tag_el is None:
+            continue
+        tag_name = tag_el.get(f"{{{W}}}val", "")
+        if keyword.lower() in tag_name.lower():
+            showing = sdtPr.find(f"{{{W}}}showingPlcHdr")
+            if showing is not None:
+                sdtPr.remove(showing)
+            sdtContent = sdt.find(f"{{{W}}}sdtContent")
+            if sdtContent is None:
+                sdtContent = etree.SubElement(sdt, f"{{{W}}}sdtContent")
+            for ch in list(sdtContent):
+                sdtContent.remove(ch)
+            p = etree.SubElement(sdtContent, f"{{{W}}}p")
+            r = etree.SubElement(p,          f"{{{W}}}r")
+            r.append(_make_rPr(bold=bold, size=_FONT_SIZE))
+            r.append(_make_t(new_text))
+            return True
+    return False
+
+def _write_sdt_content(sdt, text: str, theme_font: bool = False):
+    """Write text into an SDT element, removing placeholder flag.
+    theme_font=True uses Calibri Body (minorHAnsi) to match the template label style.
+    """
+    sdtPr = sdt.find(f"{{{W}}}sdtPr")
+    if sdtPr is not None:
+        showing = sdtPr.find(f"{{{W}}}showingPlcHdr")
+        if showing is not None:
+            sdtPr.remove(showing)
+    sdtContent = sdt.find(f"{{{W}}}sdtContent")
+    if sdtContent is None:
+        sdtContent = etree.SubElement(sdt, f"{{{W}}}sdtContent")
+    for ch in list(sdtContent):
+        sdtContent.remove(ch)
+    p = etree.SubElement(sdtContent, f"{{{W}}}p")
+    r = etree.SubElement(p,          f"{{{W}}}r")
+    r.append(_make_rPr(bold=True, size=_FONT_SIZE, theme_font=theme_font))
+    r.append(_make_t(text))
+
+
+def _fill_position_sdt(body, position: str) -> bool:
+    """
+    Fill the Position field using four escalating strategies.
+
+    The template may reuse a generic tag (e.g. 'Contact No.') for the
+    Position SDT, so we cannot rely on the tag name alone.  Instead we
+    find the SDT whose *parent paragraph* contains the word 'Position'.
+
+    Strategy order:
+      1. Parent-paragraph context — SDT inside a paragraph whose plain
+         text contains 'position' / 'job title' / 'designation'.
+         This handles the 'Contact No.' tag reuse case in this template.
+      2. Exact tag-name aliases (Position, EmployeePosition, …).
+      3. Fuzzy tag-name match (tag contains 'position', 'job', …).
+      4. SDT alias element or placeholder content contains a position hint.
+    """
+    position_hint_words = ("position", "job title", "jobtitle", "designation")
+
+    # Strategy 1 — SDT whose parent paragraph text mentions Position
+    for sdt in body.iter(f"{{{W}}}sdt"):
+        parent = sdt.getparent()
+        if parent is None:
+            continue
+        # Collect text from all runs in the parent EXCEPT the SDT itself
+        parent_text = ""
+        for child in parent:
+            if child is sdt:
+                continue
+            parent_text += "".join(t.text or "" for t in child.iter(f"{{{W}}}t"))
+        if any(hint in parent_text.lower() for hint in position_hint_words):
+            _write_sdt_content(sdt, position, theme_font=True)
+            return True
+
+    # Strategy 2 — exact tag-name aliases
+    if _set_sdt_value_by_alias(body, _POSITION_SDT_TAGS, position, bold=True):
+        return True
+
+    # Strategy 3 — fuzzy tag-name keyword match
+    for keyword in ("position", "jobtitle", "job", "designation"):
+        if _set_sdt_value_fuzzy(body, keyword, position, bold=True):
+            return True
+
+    # Strategy 4 — alias element or placeholder content hint
+    for sdt in body.iter(f"{{{W}}}sdt"):
+        sdtPr = sdt.find(f"{{{W}}}sdtPr")
+        if sdtPr is None:
+            continue
+        alias_el = sdtPr.find(f"{{{W}}}alias")
+        if alias_el is not None:
+            if any(hint in alias_el.get(f"{{{W}}}val", "").lower() for hint in position_hint_words):
+                _write_sdt_content(sdt, position)
+                return True
+        sdtContent = sdt.find(f"{{{W}}}sdtContent")
+        if sdtContent is not None:
+            ph_text = "".join(t.text or "" for t in sdtContent.iter(f"{{{W}}}t")).lower().strip()
+            if any(hint in ph_text for hint in position_hint_words):
+                showing = sdtPr.find(f"{{{W}}}showingPlcHdr")
+                if showing is not None:
+                    _write_sdt_content(sdt, position)
+                    return True
+
     return False
 
 def _get_equipment_table(body):
@@ -708,12 +879,21 @@ def fill_template(assets_df, col_map, employee_name, client, position, date_str)
         files["docProps/app.xml"] = _patch_app_xml(files["docProps/app.xml"])
     root = etree.fromstring(files["word/document.xml"])
     body = root.find(f"{{{W}}}body")
-    _set_sdt_value(body, "Name",        employee_name, bold=True)
-    _set_sdt_value(body, "Client",      client,        bold=True)
-    _set_sdt_value(body, "Position",    position,      bold=True)
-    _set_sdt_value(body, "Date",        date_str,      bold=True)
-    _set_sdt_value(body, "Contact No.", "",            bold=True)
+
+    # ── Fill standard header fields ──────────────────────────────────
+    _set_sdt_value(body, "Name",   employee_name, bold=True)
+    _set_sdt_value(body, "Client", client,        bold=True)
+    _set_sdt_value(body, "Date",   date_str,      bold=True)
+    # NOTE: Do NOT blank "Contact No." here — in this template that SDT tag
+    # is reused as the Position field. The position filler below detects it
+    # via parent-paragraph context (paragraph text contains "Position").
+
+    # ── Fill Position with multi-strategy fallback ───────────────────
+    _fill_position_sdt(body, position)
+
     _compact_page_margins(body)
+
+    # ── Fill equipment table ─────────────────────────────────────────
     eq_table = _get_equipment_table(body)
     if eq_table is not None:
         all_rows     = eq_table.findall(f"{{{W}}}tr")
@@ -746,6 +926,7 @@ def fill_template(assets_df, col_map, employee_name, client, position, date_str)
             eq_table.remove(extra_row)
         for data_row in eq_table.findall(f"{{{W}}}tr")[1:]:
             _compact_row(data_row)
+
     files["word/document.xml"] = etree.tostring(
         root, xml_declaration=True, encoding="UTF-8", standalone=True)
     out = io.BytesIO()
@@ -831,13 +1012,19 @@ def main():
     }
     user_col     = col_map.get("current_user")
     client_col   = col_map.get("client")
-    position_col = detect_position_column(df)
+    position_col = detect_position_column(df)   # <-- detected once from full df
 
     if not user_col:
         st.error('Could not find a "Current User" column. Make sure your CSV was exported from SharePoint with standard column names.')
         return
 
     st.success(f"✓ &nbsp;**{len(df):,}** records loaded from **{uploaded.name}**")
+
+    # Show detected position column (helps user verify)
+    if position_col:
+        st.caption(f"Position column detected: **{position_col}**")
+    else:
+        st.caption("ℹ️ No Position/Job Title column detected in this CSV.")
 
     # ── Step 2: Search ────────────────────────
     step_open(2, "Find Employee",
@@ -973,20 +1160,28 @@ def main():
               "These fields appear in the header of the generated document. Edit as needed.")
 
     default_client = ""
-    default_pos = ""
+    default_pos    = ""
 
     if not df_selected.empty:
+        first_row = df_selected.iloc[0]
+
         # Client
         if client_col and client_col in df_selected.columns:
-            default_client = safe_str(df_selected.iloc[0].get(client_col, ""))
+            default_client = safe_str(first_row.get(client_col, ""))
 
-        # Position - use the enhanced position detection
-        if position_col:
-            default_pos = safe_str(df_selected.iloc[0].get(position_col, ""))
-        
-        # If still empty, try the comprehensive detection
+        # Position — use the comprehensive extractor with the detected column
+        # This now correctly passes position_col (detected from the full df)
+        default_pos = get_position_value(first_row, list(df_selected.columns), position_col)
+
+        # If still empty after all strategies, try scanning all columns of the row
         if not default_pos:
-            default_pos = get_position_value(df_selected.iloc[0], df_selected.columns, None)
+            for col in df_selected.columns:
+                col_l = col.lower()
+                if any(kw in col_l for kw in ("position", "job", "designation", "title", "role")):
+                    val = safe_str(first_row.get(col, ""))
+                    if val:
+                        default_pos = val
+                        break
 
     f1, f2 = st.columns(2)
     with f1:
@@ -1021,6 +1216,7 @@ def main():
                 st.session_state["form_name"]   = form_name
                 st.session_state["form_client"] = form_client
                 st.session_state["form_date"]   = form_date
+
                 st.success("✓ &nbsp;Document ready — click Download below.")
             except Exception as e:
                 st.error(f"Error: {e}")
