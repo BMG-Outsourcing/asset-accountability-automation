@@ -1,8 +1,10 @@
 """
 Equipment Accountability Form Generator
-BMG Outsourcing — redesigned UI with per-monitor cable assignment
-Supports both Work From Home and Work On Site templates
+BMG Outsourcing — CSV upload version.
+Supports both Work From Home and Work On Site templates.
 """
+
+from __future__ import annotations
 
 import io
 import copy
@@ -10,6 +12,7 @@ import base64
 import re
 import unicodedata
 import zipfile
+import json
 from datetime import datetime
 from pathlib import Path
 from lxml import etree
@@ -18,11 +21,14 @@ import pandas as pd
 import streamlit as st
 
 # ─────────────────────────────────────────────
-# PATHS  —  checked in priority order
+# PATHS
 # ─────────────────────────────────────────────
 
 WFH_TEMPLATE_NAME    = "Equipment Accountability Form (Work From Home).dotx"
 ONSITE_TEMPLATE_NAME = "Equipment Accountability Form (Work On Site).dotx"
+
+REGISTERED_USERS_PATH = Path(__file__).parent / "registered_users.json"
+
 
 def _find_template(filename: str) -> Path | None:
     candidates = [
@@ -36,6 +42,7 @@ def _find_template(filename: str) -> Path | None:
             return p
     return None
 
+
 def _find_logo() -> Path | None:
     candidates = [
         Path(__file__).parent / "images" / "logo.png",
@@ -47,6 +54,7 @@ def _find_logo() -> Path | None:
         if p.exists():
             return p
     return None
+
 
 LOGO_PATH = _find_logo()
 
@@ -68,12 +76,78 @@ def get_logo_b64() -> str:
         return base64.b64encode(LOGO_PATH.read_bytes()).decode()
     return ""
 
-LOGO_B64 = get_logo_b64()
+
+LOGO_B64  = get_logo_b64()
 LOGO_HTML = (
-    f'<img src="data:image/png;base64,{LOGO_B64}" style="height:72px;object-fit:contain;">'
+    f'<img src="data:image/png;base64,{LOGO_B64}" style="height:64px;object-fit:contain;">'
     if LOGO_B64 else
-    '<span style="font-size:1.5rem;font-weight:900;color:#fff;letter-spacing:-1px;">BMG</span>'
+    '<span style="font-size:1.4rem;font-weight:900;color:#fff;letter-spacing:-1px;">BMG</span>'
 )
+
+# ─────────────────────────────────────────────
+# REGISTERED USERS HELPERS
+# ─────────────────────────────────────────────
+
+DEFAULT_PREPARED_BY = [
+    "IT Intern",
+    "Jiro Macabitas",
+    "Angelo Forbes",
+    "Bryan Odero",
+]
+
+
+def load_registered_users() -> list[str]:
+    try:
+        if REGISTERED_USERS_PATH.exists():
+            data = json.loads(REGISTERED_USERS_PATH.read_text(encoding="utf-8"))
+            extras = [u for u in data.get("users", []) if u not in DEFAULT_PREPARED_BY]
+            return DEFAULT_PREPARED_BY + extras
+    except Exception:
+        pass
+    return list(DEFAULT_PREPARED_BY)
+
+
+def save_registered_users(users: list[str]):
+    extras = [u for u in users if u not in DEFAULT_PREPARED_BY]
+    try:
+        REGISTERED_USERS_PATH.write_text(
+            json.dumps({"users": extras}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def get_prepared_by_options() -> list[str]:
+    if "prepared_by_options" not in st.session_state:
+        st.session_state["prepared_by_options"] = load_registered_users()
+    return st.session_state["prepared_by_options"]
+
+
+def add_prepared_by_user(name: str) -> tuple[bool, str]:
+    name = name.strip()
+    if not name:
+        return False, "Name cannot be empty."
+    options = get_prepared_by_options()
+    if name.lower() in [o.lower() for o in options]:
+        return False, f'"{name}" is already in the list.'
+    options.append(name)
+    st.session_state["prepared_by_options"] = options
+    save_registered_users(options)
+    return True, f'"{name}" has been added.'
+
+
+def remove_prepared_by_user(name: str) -> tuple[bool, str]:
+    if name in DEFAULT_PREPARED_BY:
+        return False, f'"{name}" is a default user and cannot be removed.'
+    options = get_prepared_by_options()
+    if name not in options:
+        return False, f'"{name}" not found.'
+    options.remove(name)
+    st.session_state["prepared_by_options"] = options
+    save_registered_users(options)
+    return True, f'"{name}" has been removed.'
+
 
 # ─────────────────────────────────────────────
 # STYLES
@@ -89,8 +163,7 @@ st.markdown(f"""
     --blue-lt:    #1e88e5;
     --blue-pale:  #e8f0fc;
     --orange:     #e65c00;
-    --orange-lt:  #fff3ec;
-    --green:      #43a832;
+    --green:      #2e7d32;
     --green-lt:   #edf7ea;
     --teal:       #00796b;
     --teal-lt:    #e0f2f1;
@@ -111,9 +184,9 @@ html, body, [class*="css"] {{
     color: var(--text) !important;
 }}
 
-[data-testid="stSidebar"] {{ display: none !important; }}
+[data-testid="stSidebar"]   {{ display: none !important; }}
 header[data-testid="stHeader"] {{ display: none !important; }}
-[data-testid="stDecoration"] {{ display: none !important; }}
+[data-testid="stDecoration"]   {{ display: none !important; }}
 
 .main .block-container {{
     max-width: 860px !important;
@@ -124,102 +197,91 @@ header[data-testid="stHeader"] {{ display: none !important; }}
 .bmg-header {{
     background: linear-gradient(135deg, #0d2545 0%, #1565c0 100%);
     border-radius: 0 0 14px 14px;
-    padding: 2rem 2rem;
+    padding: 1.6rem 2rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin: -2rem -1.5rem 2.5rem -1.5rem;
+    margin: -2rem -1.5rem 2rem -1.5rem;
     box-shadow: var(--shadow-md);
 }}
 .bmg-header-title {{
     color: #fff;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 700;
     letter-spacing: -0.01em;
 }}
 .bmg-header-sub {{
-    color: rgba(255,255,255,.6);
-    font-size: 0.76rem;
+    color: rgba(255,255,255,.55);
+    font-size: 0.74rem;
     font-weight: 400;
     margin-top: 2px;
 }}
 
-/* ── Form type selector ── */
-.form-type-selector {{
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 0.6rem;
+/* ── Form type toggle ── */
+.form-toggle-btn .stButton > button {{
+    width: 100% !important;
+    padding: 0.85rem 1rem !important;
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+    letter-spacing: 0.01em !important;
+    transition: all .18s !important;
 }}
-.form-type-card {{
-    flex: 1;
-    border: 2px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.1rem 1.3rem;
-    background: var(--card);
-    box-shadow: var(--shadow);
-    text-align: left;
+.form-toggle-btn.wfh-active .stButton > button {{
+    background: linear-gradient(135deg, #1565c0, #1e88e5) !important;
+    color: #fff !important;
+    border: 2px solid #1565c0 !important;
+    box-shadow: 0 0 0 3px rgba(21,101,192,.18), 0 2px 10px rgba(21,101,192,.25) !important;
 }}
-.form-type-card.active-wfh {{
-    border-color: var(--blue);
-    background: var(--blue-pale);
-    box-shadow: 0 0 0 3px rgba(21,101,192,.12), var(--shadow);
+.form-toggle-btn.wfh-inactive .stButton > button {{
+    background: #fff !important;
+    color: var(--navy) !important;
+    border: 2px solid var(--border) !important;
+    box-shadow: var(--shadow) !important;
 }}
-.form-type-card.active-onsite {{
-    border-color: var(--teal);
-    background: var(--teal-lt);
-    box-shadow: 0 0 0 3px rgba(0,121,107,.12), var(--shadow);
+.form-toggle-btn.wfh-inactive .stButton > button:hover {{
+    background: var(--blue-pale) !important;
+    border-color: #b3c8f0 !important;
 }}
-.form-type-icon {{
-    font-size: 1.6rem;
-    margin-bottom: 0.3rem;
-    display: block;
+.form-toggle-btn.onsite-active .stButton > button {{
+    background: linear-gradient(135deg, #00796b, #26a69a) !important;
+    color: #fff !important;
+    border: 2px solid #00796b !important;
+    box-shadow: 0 0 0 3px rgba(0,121,107,.18), 0 2px 10px rgba(0,121,107,.25) !important;
 }}
-.form-type-label {{
-    font-size: 0.92rem;
-    font-weight: 700;
-    color: var(--navy);
-    margin-bottom: 2px;
+.form-toggle-btn.onsite-inactive .stButton > button {{
+    background: #fff !important;
+    color: var(--navy) !important;
+    border: 2px solid var(--border) !important;
+    box-shadow: var(--shadow) !important;
 }}
-.form-type-desc {{
-    font-size: 0.75rem;
-    color: var(--muted);
-    line-height: 1.45;
+.form-toggle-btn.onsite-inactive .stButton > button:hover {{
+    background: var(--teal-lt) !important;
+    border-color: var(--teal-pale) !important;
 }}
-.form-type-badge {{
-    display: inline-block;
-    font-size: 0.65rem;
-    font-weight: 700;
-    border-radius: 4px;
-    padding: 2px 7px;
-    margin-top: 5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}}
-.badge-wfh    {{ background: var(--blue); color: #fff; }}
-.badge-onsite {{ background: var(--teal); color: #fff; }}
 
 /* ── Step card ── */
 .step-card {{
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1.4rem 1.6rem 1.1rem;
+    padding: 1.3rem 1.5rem 1rem;
     margin-bottom: 1rem;
     box-shadow: var(--shadow);
 }}
 .step-label {{
     display: flex;
     align-items: center;
-    gap: 0.65rem;
-    margin-bottom: 0.6rem;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
 }}
 .step-badge {{
     background: linear-gradient(135deg, #1565c0, #1e88e5);
     color: #fff;
-    font-size: 0.68rem;
+    font-size: 0.67rem;
     font-weight: 700;
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     display: inline-flex;
     align-items: center;
@@ -227,16 +289,45 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     flex-shrink: 0;
 }}
 .step-title {{
-    font-size: 0.93rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: var(--navy);
-    letter-spacing: 0.005em;
 }}
 .step-desc {{
-    font-size: 0.8rem;
+    font-size: 0.79rem;
     color: var(--muted);
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.85rem;
     line-height: 1.55;
+}}
+
+/* ── CSV source pill bar ── */
+.csv-source-bar {{
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: var(--green-lt);
+    border: 1px solid #c3e6c0;
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.8rem;
+    color: var(--green);
+    font-weight: 600;
+    height: 38px;
+    box-sizing: border-box;
+}}
+.csv-stale-bar {{
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.8rem;
+    color: #b07d00;
+    font-weight: 500;
+    height: 38px;
+    box-sizing: border-box;
 }}
 
 /* ── Prepared by card ── */
@@ -244,16 +335,16 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     background: linear-gradient(135deg, #f0f7ff 0%, #e8f0fc 100%);
     border: 1.5px solid #b3c8f0;
     border-radius: var(--radius);
-    padding: 1.2rem 1.6rem 1rem;
-    margin-bottom: 1.2rem;
+    padding: 1rem 1.4rem 0.85rem;
+    margin-bottom: 1rem;
     box-shadow: var(--shadow);
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.9rem;
 }}
-.preparedby-icon {{ font-size: 1.6rem; flex-shrink: 0; }}
+.preparedby-icon {{ font-size: 1.4rem; flex-shrink: 0; }}
 .preparedby-label {{
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--blue);
     text-transform: uppercase;
@@ -261,9 +352,60 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     margin-bottom: 2px;
 }}
 .preparedby-hint {{
-    font-size: 0.76rem;
+    font-size: 0.75rem;
     color: var(--muted);
     line-height: 1.4;
+}}
+
+/* ── User registration panel ── */
+.user-reg-panel {{
+    background: #f7f9fd;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.2rem;
+    margin-top: 0.6rem;
+    margin-bottom: 0.4rem;
+}}
+.user-reg-title {{
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.user-chip-wrap {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 0.55rem;
+}}
+.user-chip {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.76rem;
+    font-weight: 500;
+    color: var(--navy);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 3px 10px;
+}}
+.user-chip.default-chip {{
+    color: var(--muted);
+    background: #f0f4fa;
+    border-style: dashed;
+}}
+
+/* ── Inline row alignment helper ── */
+[data-testid="stHorizontalBlock"] > div {{
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
 }}
 
 /* ── Inputs ── */
@@ -289,7 +431,7 @@ label,
 .stDateInput label,
 .stSelectbox label {{
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.72rem !important;
+    font-size: 0.71rem !important;
     font-weight: 600 !important;
     color: var(--muted) !important;
     text-transform: uppercase !important;
@@ -316,21 +458,51 @@ label,
     transform: translateY(-1px) !important;
 }}
 
-/* ── Small outline buttons ── */
-.small-btn .stButton > button {{
+/* ── Outline-blue buttons ── */
+.btn-outline-blue .stButton > button {{
     background: #fff !important;
     color: var(--blue) !important;
     border: 1.5px solid var(--blue) !important;
-    font-size: 0.76rem !important;
-    padding: 0.28rem 0.85rem !important;
+    font-size: 0.75rem !important;
+    padding: 0.25rem 0.8rem !important;
     box-shadow: none !important;
     font-weight: 600 !important;
-    letter-spacing: 0.02em !important;
+    height: 38px !important;
+    min-height: 38px !important;
 }}
-.small-btn .stButton > button:hover {{
+.btn-outline-blue .stButton > button:hover {{
     background: var(--blue-pale) !important;
     transform: none !important;
     box-shadow: none !important;
+}}
+
+/* ── Danger/outline-red buttons ── */
+.btn-danger .stButton > button {{
+    background: #fff !important;
+    color: #c62828 !important;
+    border: 1.5px solid #ef9a9a !important;
+    font-size: 0.75rem !important;
+    padding: 0.25rem 0.8rem !important;
+    box-shadow: none !important;
+    font-weight: 600 !important;
+    height: 38px !important;
+    min-height: 38px !important;
+}}
+.btn-danger .stButton > button:hover {{
+    background: #ffebee !important;
+    border-color: #c62828 !important;
+    transform: none !important;
+    box-shadow: none !important;
+}}
+
+/* ── Column-scoped small button sizing ── */
+[data-testid="stHorizontalBlock"] [data-testid="stColumn"] .stButton > button {{
+    height: 38px !important;
+    min-height: 38px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    font-size: 0.78rem !important;
+    line-height: 1 !important;
 }}
 
 /* ── Download button ── */
@@ -342,7 +514,6 @@ label,
     font-family: 'DM Sans', sans-serif !important;
     font-size: 0.87rem !important;
     font-weight: 600 !important;
-    letter-spacing: 0.01em !important;
     box-shadow: 0 2px 8px rgba(230,92,0,.35) !important;
     transition: all .15s !important;
 }}
@@ -357,41 +528,147 @@ label,
     background: #f7f9fd;
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 0.5rem 0.8rem;
-    margin-bottom: 0.3rem !important;
+    padding: 0.6rem 0.85rem !important;
+    margin-bottom: 0.35rem !important;
+    min-height: 2.4rem !important;
     transition: background .12s;
+    display: flex !important;
+    align-items: flex-start !important;
 }}
 .stCheckbox:hover {{ background: var(--blue-pale); border-color: #b3c8f0; }}
 .stCheckbox label {{
-    font-size: 0.83rem !important;
+    font-size: 0.84rem !important;
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
     color: var(--text) !important;
+    line-height: 1.5 !important;
+    white-space: normal !important;
+    word-break: break-word !important;
 }}
 
-/* ── Monitor cable group ── */
-.monitor-group-header {{
-    background: var(--blue-pale);
-    border: 1px solid #b3c8f0;
-    border-radius: 8px 8px 0 0;
-    padding: 0.5rem 0.9rem;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--navy);
+/* ── Monitor block ── */
+.monitor-block {{
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 0.85rem;
+    background: var(--card);
+    box-shadow: var(--shadow);
+}}
+.monitor-block-header {{
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.6rem;
-    margin-bottom: 0;
+    gap: 9px;
+    padding: 0.65rem 0.9rem;
+    background: #f0f4fa;
+    border-bottom: 1px solid var(--border);
 }}
-.monitor-group-body {{
-    background: #f7faff;
-    border: 1px solid #b3c8f0;
-    border-top: none;
-    border-radius: 0 0 8px 8px;
-    padding: 0.55rem 0.9rem 0.4rem;
-    margin-bottom: 0.5rem;
+.monitor-block-icon {{
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    background: var(--blue-pale);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}}
+.monitor-block-title {{
+    font-size: 0.83rem;
+    font-weight: 700;
+    color: var(--navy);
+}}
+.monitor-block-sub {{
+    font-size: 0.73rem;
+    color: var(--muted);
+    margin-top: 1px;
+}}
+
+/* ── Adapter chip panel ── */
+.adapter-chip-panel {{
+    margin: 0 0.9rem 0.65rem 2.4rem;
+    background: #f7f9fd;
+    border: 1px solid #dde5f0;
+    border-radius: 8px;
+    overflow: hidden;
+}}
+.adapter-chip-header {{
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0.32rem 0.7rem;
+    border-bottom: 1px solid #e4ebf5;
+    background: #eef2fb;
+}}
+.adapter-chip-dot {{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+}}
+.adapter-chip-label {{
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}}
+.adapter-chips-wrap {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 0.5rem 0.7rem;
+}}
+.adapter-chip {{
+    font-size: 0.73rem;
+    padding: 3px 10px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    color: var(--muted);
+    background: #fff;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    transition: all 0.12s;
+    white-space: nowrap;
+}}
+.adapter-chip:hover {{ border-color: var(--blue); color: var(--blue); background: var(--blue-pale); }}
+.adapter-chip-none {{
+    font-size: 0.73rem;
+    padding: 3px 10px;
+    border-radius: 100px;
+    border: 1px dashed var(--border);
+    cursor: pointer;
+    color: var(--muted);
+    background: transparent;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    transition: all 0.12s;
+    white-space: nowrap;
+}}
+.adapter-chip-none:hover {{ border-color: var(--muted); background: #f0f4fa; }}
+.adapter-chip.chip-selected {{
+    background: var(--blue-pale); color: var(--blue); border-color: var(--blue); font-weight: 600;
+}}
+.adapter-chip-none.chip-selected {{
+    background: #f0f4fa; color: var(--muted); border-style: solid; border-color: var(--muted); font-weight: 600;
+}}
+
+/* ── Charger badge ── */
+.charger-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--green);
+    background: var(--green-lt);
+    border: 1px solid #c3e6c0;
+    border-radius: 6px;
+    padding: 0.3rem 0.65rem;
+    margin-bottom: 0.75rem;
 }}
 
 /* ── Sequence badge ── */
@@ -399,11 +676,11 @@ label,
     display: inline-block;
     background: var(--blue-pale);
     color: var(--blue);
-    font-size: 0.68rem;
+    font-size: 0.67rem;
     font-weight: 700;
     border-radius: 4px;
-    padding: 1px 6px;
-    margin-right: 6px;
+    padding: 1px 5px;
+    margin-right: 5px;
     vertical-align: middle;
 }}
 
@@ -411,7 +688,7 @@ label,
 .stAlert {{
     border-radius: 8px !important;
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.83rem !important;
+    font-size: 0.82rem !important;
 }}
 
 /* ── Metrics ── */
@@ -419,47 +696,45 @@ label,
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1rem 1.2rem;
+    padding: 0.9rem 1.1rem;
     box-shadow: var(--shadow);
 }}
 [data-testid="stMetricValue"] {{
     font-family: 'DM Sans', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 1.7rem !important;
+    font-size: 1.6rem !important;
     color: var(--navy) !important;
 }}
 [data-testid="stMetricLabel"] {{
     font-family: 'DM Sans', sans-serif !important;
-    font-size: 0.72rem !important;
+    font-size: 0.7rem !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
     letter-spacing: 0.06em !important;
     color: var(--muted) !important;
 }}
 
-/* ── Divider ── */
-hr {{ border-color: var(--border) !important; margin: 1rem 0 !important; }}
+hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
 
-/* ── Caption ── */
-.stCaption, small, [data-testid="stCaptionContainer"] {{
+.stCaption, small {{
     font-family: 'DM Sans', sans-serif !important;
     color: var(--muted) !important;
-    font-size: 0.76rem !important;
+    font-size: 0.75rem !important;
 }}
 
-/* ── Search hint ── */
-.search-hint {{
+/* ── Info hint ── */
+.info-hint {{
     font-size: 0.77rem;
     color: var(--blue);
     background: var(--blue-pale);
     border-left: 3px solid var(--blue);
     border-radius: 0 6px 6px 0;
-    padding: 0.55rem 0.75rem;
-    margin-bottom: 0.85rem;
+    padding: 0.5rem 0.7rem;
+    margin-bottom: 0.8rem;
     font-weight: 400;
     line-height: 1.6;
 }}
-.search-hint strong {{ font-weight: 700; color: var(--navy); }}
+.info-hint strong {{ font-weight: 700; color: var(--navy); }}
 
 /* ── File uploader ── */
 [data-testid="stFileUploader"] section {{
@@ -472,9 +747,9 @@ hr {{ border-color: var(--border) !important; margin: 1rem 0 !important; }}
 .bmg-footer {{
     text-align: center;
     color: var(--muted);
-    font-size: 0.71rem;
-    margin-top: 2rem;
-    padding-top: 1rem;
+    font-size: 0.7rem;
+    margin-top: 1.8rem;
+    padding-top: 0.9rem;
     border-top: 1px solid var(--border);
 }}
 
@@ -482,26 +757,57 @@ hr {{ border-color: var(--border) !important; margin: 1rem 0 !important; }}
 .preview-table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.8rem;
+    font-size: 0.79rem;
     margin-top: 0.5rem;
 }}
 .preview-table th {{
     background: var(--navy);
     color: #fff;
     font-weight: 600;
-    padding: 0.45rem 0.7rem;
+    padding: 0.4rem 0.65rem;
     text-align: left;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }}
 .preview-table td {{
-    padding: 0.4rem 0.7rem;
+    padding: 0.38rem 0.65rem;
     border-bottom: 1px solid var(--border);
     color: var(--text);
 }}
 .preview-table tr:nth-child(even) td {{ background: #f7f9fd; }}
 .preview-table tr:hover td {{ background: var(--blue-pale); }}
+
+/* ── Remarks field ── */
+.remarks-wrap {{
+    background: #fffdf0;
+    border: 1.5px solid #ffe082;
+    border-radius: 8px;
+    padding: 0.8rem 0.95rem 0.55rem;
+    margin-top: 0.3rem;
+    margin-bottom: 0.5rem;
+}}
+.remarks-label {{
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #b07d00;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.3rem;
+}}
+.remarks-hint {{
+    font-size: 0.73rem;
+    color: var(--muted);
+    margin-bottom: 0.45rem;
+    line-height: 1.45;
+}}
+
+/* ── User manager label spacer ── */
+.user-mgr-btn-spacer {{
+    height: 2.35rem;
+    display: block;
+}}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -523,58 +829,25 @@ CSV_COLUMNS = {
     "remarks":        "Remark(s)",
 }
 
-PREPARED_BY_OPTIONS = [
-    "IT Intern",
-    "Jiro Macabitas",
-    "Angelo Forbes",
-    "Bryan Odero",
-]
-
 ITEM_SEQUENCE_ORDER = {
-    "laptop":                  1,
-    "computer":                1,
-    "desktop":                 1,
-    "charger":                 2,
-    "monitor":                 3,
-    "hdmi":                    5,
-    "keyboard":                6,
-    "mouse":                   7,
-    "headset":                 8,
-    "headphone":               8,
-    "usb":                     9,
-    "usb peripheral":          9,
-    "vga":                     10,
-    "dvi":                     11,
-    "displayport":             12,
-    "type-c":                  13,
-    "type c":                  13,
-    "adapter":                 13,
-    "converter":               13,
-    "docking station":         14,
-    "docking":                 14,
-    "webcam":                  16,
-    "speaker":                 17,
-    "ethernet adapter":        18,
+    "laptop": 1, "computer": 1, "desktop": 1,
+    "charger": 2, "monitor": 3,
+    "hdmi": 5, "keyboard": 6, "mouse": 7,
+    "headset": 8, "headphone": 8, "usb": 9,
+    "usb peripheral": 9, "vga": 10, "dvi": 11,
+    "displayport": 12, "type-c": 13, "type c": 13,
+    "adapter": 13, "converter": 13, "docking station": 14,
+    "docking": 14, "webcam": 16, "speaker": 17,
+    "ethernet adapter": 18,
 }
 
-SIMPLE_PERIPHERALS = [
-    ("Charger",         "Charger"),
-    ("Keyboard",        "Keyboard"),
-    ("Mouse",           "Mouse"),
-    ("Headset",         "Headset"),
-    ("Docking Station", "Docking Station"),
-    ("Webcam",          "Webcam"),
-    ("Speakers",        "Audio"),
-    ("Ethernet Adapter","Network Adapter"),
-]
-
 MONITOR_PERIPHERALS = [
-    ("Monitor Power Cable", "Monitor Power Cable", 3.5),
-    ("HDMI Cable",          "HDMI Cable",          5.0),
-    ("VGA Cable",           "VGA Cable",           10.0),
-    ("DVI Cable",           "DVI Cable",           11.0),
-    ("DisplayPort Cable",   "DisplayPort Cable",   12.0),
-    ("Type-C Adapter",      "Type-C Adapter",      13.0),
+    ("Monitor Power Cable",  3.5,  None),
+    ("HDMI Cable",           5.0,  ["HDMI to VGA", "HDMI to DisplayPort", "HDMI to DVI", "HDMI to USB-C"]),
+    ("VGA Cable",            10.0, ["VGA to HDMI", "VGA to DisplayPort", "VGA to DVI"]),
+    ("DVI Cable",            11.0, ["DVI to HDMI", "DVI to VGA", "DVI to DisplayPort"]),
+    ("DisplayPort Cable",    12.0, ["DisplayPort to HDMI", "DisplayPort to VGA", "DisplayPort to DVI", "DisplayPort to USB-C"]),
+    ("USB-C Cable",          13.0, ["USB-C to HDMI", "USB-C to VGA", "USB-C to DisplayPort", "USB-C to DVI"]),
 ]
 
 _POSITION_SP_SUFFIXES = (":position", ":jobtitle", ":job title", ":title", ":designation")
@@ -585,20 +858,11 @@ _FONT_NAME  = "Calibri"
 _FONT_SIZE  = "20"
 _TABLE_SIZE = "18"
 
+_JS_ONCLICK_REGEX = r"/'([^']+)'\s*\)$/"
+
 # ─────────────────────────────────────────────
 # DATA HELPERS
 # ─────────────────────────────────────────────
-
-def load_csv(file_obj):
-    for enc in ("utf-8-sig", "latin-1"):
-        try:
-            file_obj.seek(0)
-            return pd.read_csv(file_obj, encoding=enc), None
-        except UnicodeDecodeError:
-            continue
-        except Exception as e:
-            return pd.DataFrame(), str(e)
-    return pd.DataFrame(), "Could not decode the file."
 
 def safe_str(val) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)):
@@ -606,6 +870,7 @@ def safe_str(val) -> str:
     if isinstance(val, (datetime, pd.Timestamp)):
         return val.strftime("%B %d, %Y")
     return str(val).strip()
+
 
 def detect_columns(df: pd.DataFrame) -> dict:
     actual = [str(c) for c in df.columns]
@@ -617,6 +882,7 @@ def detect_columns(df: pd.DataFrame) -> dict:
             matches = [c for c in actual if expected.lower() in c.lower()]
             result[key] = matches[0] if matches else None
     return result
+
 
 def detect_position_column(df: pd.DataFrame) -> str | None:
     cols = [str(c) for c in df.columns]
@@ -635,6 +901,7 @@ def detect_position_column(df: pd.DataFrame) -> str | None:
             if kw in col_l:
                 return col
     return None
+
 
 def get_position_value(row, df_columns, position_col: str | None) -> str:
     if position_col and position_col in df_columns:
@@ -659,9 +926,7 @@ def get_position_value(row, df_columns, position_col: str | None) -> str:
 
 def _get_sequence_key(equipment_text: str) -> float:
     text_lower = equipment_text.lower()
-    if "monitor power" in text_lower or (
-        "power cable" in text_lower and "monitor" in text_lower
-    ):
+    if "monitor power" in text_lower or ("power cable" in text_lower and "monitor" in text_lower):
         return 3.5
     sorted_keys = sorted(ITEM_SEQUENCE_ORDER.keys(), key=lambda k: -len(k))
     for keyword in sorted_keys:
@@ -669,22 +934,24 @@ def _get_sequence_key(equipment_text: str) -> float:
             return float(ITEM_SEQUENCE_ORDER[keyword])
     return 99.0
 
+
 def _is_monitor(equipment_text: str) -> bool:
     t = equipment_text.lower()
     return "monitor" in t and "power" not in t and "cable" not in t
+
 
 def _build_equipment_label(brand: str, model: str, content: str, asset_tag: str) -> str:
     parts = [p for p in [brand, model, content] if p]
     return " ".join(parts) if parts else asset_tag
 
+
 def sort_assets_by_sequence(
     assets_df: pd.DataFrame,
     col_map: dict,
-    simple_extra_rows: list[dict],
     monitor_cable_assignments: list[dict],
+    shared_remarks: str = "",
 ) -> list[dict]:
     rows: list[dict] = []
-
     for _, row in assets_df.iterrows():
         c         = col_map
         content   = safe_str(row.get(c.get("content_type") or "", ""))
@@ -692,40 +959,28 @@ def sort_assets_by_sequence(
         model     = safe_str(row.get(c.get("model")        or "", ""))
         serial    = safe_str(row.get(c.get("serial")       or "", ""))
         asset_tag = safe_str(row.get(c.get("asset_tag")    or "", ""))
-        remarks   = safe_str(row.get(c.get("remarks")      or "", ""))
         equipment = _build_equipment_label(brand, model, content, asset_tag)
         seq_key   = _get_sequence_key(equipment)
         rows.append({
             "equipment":   equipment,
             "serial":      serial,
             "asset_tag":   asset_tag,
-            "remarks":     remarks,
+            "remarks":     "",
             "_seq_key":    seq_key,
             "_is_monitor": _is_monitor(equipment),
         })
 
-    for extra in simple_extra_rows:
-        periph_name = extra.get("name", "")
-        equipment   = _build_equipment_label(
-            extra.get("brand", ""), extra.get("model", ""),
-            extra.get("type",  ""), periph_name,
-        )
-        rows.append({
-            "equipment":   equipment,
-            "serial":      extra.get("serial",    ""),
-            "asset_tag":   extra.get("asset_tag", ""),
-            "remarks":     extra.get("remarks",   ""),
-            "_seq_key":    _get_sequence_key(periph_name),
-            "_is_monitor": False,
-        })
-
+    rows.append({
+        "equipment": "Charger", "serial": "", "asset_tag": "",
+        "remarks": "", "_seq_key": 2.0, "_is_monitor": False,
+    })
     rows.sort(key=lambda r: r["_seq_key"])
 
     from collections import defaultdict
-    cables_by_monitor: dict[int, list[tuple[float, str]]] = defaultdict(list)
+    cables_by_monitor: dict[int, list] = defaultdict(list)
     for assignment in monitor_cable_assignments:
         cables_by_monitor[assignment["monitor_idx"]].append(
-            (assignment["cable_seq"], assignment["cable_name"])
+            (assignment["cable_seq"], assignment["cable_name"], assignment.get("adapter_name", ""))
         )
     for idx in cables_by_monitor:
         cables_by_monitor[idx].sort(key=lambda x: x[0])
@@ -735,18 +990,22 @@ def sort_assets_by_sequence(
     for row in rows:
         result.append(row)
         if row.get("_is_monitor"):
-            for cable_seq, cable_name in cables_by_monitor.get(monitor_counter, []):
+            for cable_seq, cable_name, adapter_name in cables_by_monitor.get(monitor_counter, []):
                 result.append({
-                    "equipment":   cable_name,
-                    "serial":      "",
-                    "asset_tag":   "",
-                    "remarks":     "",
-                    "_seq_key":    cable_seq,
-                    "_is_monitor": False,
+                    "equipment": cable_name, "serial": "", "asset_tag": "", "remarks": "",
+                    "_seq_key": cable_seq, "_is_monitor": False,
                 })
+                if adapter_name and adapter_name != "No Adapter Needed":
+                    result.append({
+                        "equipment": adapter_name, "serial": "", "asset_tag": "", "remarks": "",
+                        "_seq_key": cable_seq + 0.1, "_is_monitor": False,
+                    })
             monitor_counter += 1
 
-    return [{k: v for k, v in r.items() if not k.startswith("_")} for r in result]
+    final = [{k: v for k, v in r.items() if not k.startswith("_")} for r in result]
+    if final and shared_remarks:
+        final[0]["remarks"] = shared_remarks
+    return final
 
 # ─────────────────────────────────────────────
 # SMART SEARCH
@@ -757,6 +1016,7 @@ def _normalize(text: str) -> str:
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     text = re.sub(r"[^\w\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip().lower()
+
 
 def _score_match(query: str, name: str) -> tuple:
     q_norm   = _normalize(query)
@@ -773,13 +1033,14 @@ def _score_match(query: str, name: str) -> tuple:
     full_substr    = q_norm in n_norm
     coverage       = exact_matches  / n_q
     substr_cov     = substr_matches / n_q
-    if exact_matches  == n_q:                         return (1, coverage)
-    if substr_matches == n_q:                         return (2, substr_cov)
-    if exact_matches  >= max(1, round(n_q * 0.6)):   return (3, coverage)
-    if substr_matches >= max(1, round(n_q * 0.6)):   return (4, substr_cov)
-    if exact_matches  >= 1:                           return (5, coverage)
-    if substr_matches >= 1 or full_substr:            return (6, max(substr_cov, 0.1))
+    if exact_matches  == n_q:                       return (1, coverage)
+    if substr_matches == n_q:                       return (2, substr_cov)
+    if exact_matches  >= max(1, round(n_q * 0.6)):  return (3, coverage)
+    if substr_matches >= max(1, round(n_q * 0.6)):  return (4, substr_cov)
+    if exact_matches  >= 1:                         return (5, coverage)
+    if substr_matches >= 1 or full_substr:          return (6, max(substr_cov, 0.1))
     return (None, 0.0)
+
 
 def smart_search(df: pd.DataFrame, user_col: str, query: str):
     query = query.strip()
@@ -823,12 +1084,11 @@ def smart_search(df: pd.DataFrame, user_col: str, query: str):
 
 _CT_DOTX = "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
 _CT_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-
-_ROW_HEIGHT_DXA = "180"
-_CELL_PAD_TOP   = "0"
-_CELL_PAD_BTM   = "0"
-_CELL_PAD_LEFT  = "60"
-_CELL_PAD_RIGHT = "60"
+_ROW_HEIGHT_DXA = "220"
+_CELL_PAD_TOP   = "40"
+_CELL_PAD_BTM   = "40"
+_CELL_PAD_LEFT  = "80"
+_CELL_PAD_RIGHT = "80"
 
 
 def _make_rPr(bold: bool = False, size: str = _FONT_SIZE) -> etree._Element:
@@ -845,6 +1105,7 @@ def _make_rPr(bold: bool = False, size: str = _FONT_SIZE) -> etree._Element:
     szCs = etree.SubElement(rPr, f"{{{W}}}szCs"); szCs.set(f"{{{W}}}val", size)
     return rPr
 
+
 def _make_t(text: str) -> etree._Element:
     t = etree.Element(f"{{{W}}}t")
     t.text = text
@@ -852,8 +1113,10 @@ def _make_t(text: str) -> etree._Element:
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     return t
 
+
 def _patch_content_types(data: bytes) -> bytes:
     return data.replace(_CT_DOTX.encode(), _CT_DOCX.encode())
+
 
 def _patch_app_xml(data: bytes) -> bytes:
     try:
@@ -865,8 +1128,8 @@ def _patch_app_xml(data: bytes) -> bytes:
     except Exception:
         return data
 
-def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True,
-                   size: str = _FONT_SIZE) -> bool:
+
+def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True, size: str = _FONT_SIZE) -> bool:
     for sdt in body.iter(f"{{{W}}}sdt"):
         sdtPr = sdt.find(f"{{{W}}}sdtPr")
         if sdtPr is None:
@@ -884,21 +1147,20 @@ def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True,
             sdtContent.remove(ch)
         p   = etree.SubElement(sdtContent, f"{{{W}}}p")
         pPr = etree.SubElement(p,          f"{{{W}}}pPr")
-        jc  = etree.SubElement(pPr, f"{{{W}}}jc")
-        jc.set(f"{{{W}}}val", "left")
+        jc  = etree.SubElement(pPr, f"{{{W}}}jc"); jc.set(f"{{{W}}}val", "left")
         sp  = etree.SubElement(pPr, f"{{{W}}}spacing")
-        sp.set(f"{{{W}}}before",   "0")
-        sp.set(f"{{{W}}}after",    "0")
-        sp.set(f"{{{W}}}line",     "240")
-        sp.set(f"{{{W}}}lineRule", "auto")
+        sp.set(f"{{{W}}}before", "0"); sp.set(f"{{{W}}}after", "0")
+        sp.set(f"{{{W}}}line",   "240"); sp.set(f"{{{W}}}lineRule", "auto")
         r = etree.SubElement(p, f"{{{W}}}r")
         r.append(_make_rPr(bold=bold, size=size))
         r.append(_make_t(new_text))
         return True
     return False
 
+
 def _fill_position_sdt(body, position: str) -> bool:
     return _set_sdt_value(body, "Contact No.", position, bold=True, size=_FONT_SIZE)
+
 
 def _fill_prepared_by(body, prepared_by: str) -> bool:
     if not prepared_by:
@@ -920,6 +1182,7 @@ def _fill_prepared_by(body, prepared_by: str) -> bool:
             replaced = True
     return replaced
 
+
 def _fill_prepared_by_fallback(body, prepared_by: str) -> bool:
     replaced = False
     for t_el in body.iter(f"{{{W}}}t"):
@@ -928,12 +1191,14 @@ def _fill_prepared_by_fallback(body, prepared_by: str) -> bool:
             replaced = True
     return replaced
 
+
 def _get_equipment_table(body):
     for tbl in body.iter(f"{{{W}}}tbl"):
         tblGrid = tbl.find(f"{{{W}}}tblGrid")
         if tblGrid is not None and len(tblGrid.findall(f"{{{W}}}gridCol")) == 5:
             return tbl
     return None
+
 
 def _set_cell_text(cell_el, text: str):
     p_list = cell_el.findall(f"{{{W}}}p")
@@ -948,16 +1213,14 @@ def _set_cell_text(cell_el, text: str):
     for tag in [f"{{{W}}}jc", f"{{{W}}}spacing", f"{{{W}}}contextualSpacing"]:
         for el in pPr.findall(tag):
             pPr.remove(el)
-    jc = etree.SubElement(pPr, f"{{{W}}}jc")
-    jc.set(f"{{{W}}}val", "left")
+    jc = etree.SubElement(pPr, f"{{{W}}}jc"); jc.set(f"{{{W}}}val", "left")
     sp = etree.SubElement(pPr, f"{{{W}}}spacing")
-    sp.set(f"{{{W}}}before",   "0")
-    sp.set(f"{{{W}}}after",    "0")
-    sp.set(f"{{{W}}}line",     "240")
-    sp.set(f"{{{W}}}lineRule", "auto")
+    sp.set(f"{{{W}}}before", "0"); sp.set(f"{{{W}}}after", "0")
+    sp.set(f"{{{W}}}line",   "240"); sp.set(f"{{{W}}}lineRule", "auto")
     r_el = etree.SubElement(p_el, f"{{{W}}}r")
     r_el.append(_make_rPr(bold=False, size=_TABLE_SIZE))
     r_el.append(_make_t(text))
+
 
 def _compact_row(row_el):
     trPr = row_el.find(f"{{{W}}}trPr")
@@ -967,8 +1230,8 @@ def _compact_row(row_el):
     for trH in trPr.findall(f"{{{W}}}trHeight"):
         trPr.remove(trH)
     trH = etree.SubElement(trPr, f"{{{W}}}trHeight")
-    trH.set(f"{{{W}}}val",   _ROW_HEIGHT_DXA)
-    trH.set(f"{{{W}}}hRule", "exact")
+    trH.set(f"{{{W}}}val", _ROW_HEIGHT_DXA)
+    trH.set(f"{{{W}}}hRule", "atLeast")
     for tc in row_el.iter(f"{{{W}}}tc"):
         tcPr = tc.find(f"{{{W}}}tcPr")
         if tcPr is None:
@@ -977,19 +1240,15 @@ def _compact_row(row_el):
         tcMar = tcPr.find(f"{{{W}}}tcMar")
         if tcMar is None:
             tcMar = etree.SubElement(tcPr, f"{{{W}}}tcMar")
-        for side, val in [
-            ("top",    _CELL_PAD_TOP),  ("bottom", _CELL_PAD_BTM),
-            ("left",   _CELL_PAD_LEFT), ("right",  _CELL_PAD_RIGHT),
-        ]:
+        for side, val in [("top", _CELL_PAD_TOP), ("bottom", _CELL_PAD_BTM),
+                          ("left", _CELL_PAD_LEFT), ("right", _CELL_PAD_RIGHT)]:
             el = tcMar.find(f"{{{W}}}{side}")
             if el is None:
                 el = etree.SubElement(tcMar, f"{{{W}}}{side}")
-            el.set(f"{{{W}}}w",    val)
-            el.set(f"{{{W}}}type", "dxa")
+            el.set(f"{{{W}}}w", val); el.set(f"{{{W}}}type", "dxa")
         for va in tcPr.findall(f"{{{W}}}vAlign"):
             tcPr.remove(va)
-        vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign")
-        vAlign.set(f"{{{W}}}val", "top")
+        vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign"); vAlign.set(f"{{{W}}}val", "center")
         for p in tc.iter(f"{{{W}}}p"):
             pPr = p.find(f"{{{W}}}pPr")
             if pPr is not None:
@@ -1003,6 +1262,7 @@ def _compact_row(row_el):
                     for spacing in rPr.findall(f"{{{W}}}spacing"):
                         rPr.remove(spacing)
 
+
 def _compact_page_margins(body):
     sectPr = body.find(f"{{{W}}}sectPr")
     if sectPr is None:
@@ -1010,14 +1270,14 @@ def _compact_page_margins(body):
     pgMar = sectPr.find(f"{{{W}}}pgMar")
     if pgMar is None:
         pgMar = etree.SubElement(sectPr, f"{{{W}}}pgMar")
-    limits = {"top": 720, "bottom": 720, "left": 720, "right": 720}
-    for side, max_val in limits.items():
+    for side, max_val in [("top", 720), ("bottom", 720), ("left", 720), ("right", 720)]:
         current = pgMar.get(f"{{{W}}}{side}")
         try:
             if current is None or int(current) > max_val:
                 pgMar.set(f"{{{W}}}{side}", str(max_val))
         except ValueError:
             pgMar.set(f"{{{W}}}{side}", str(max_val))
+
 
 def _shrink_header_sdt_cells(body):
     tables = list(body.iter(f"{{{W}}}tbl"))
@@ -1030,19 +1290,16 @@ def _shrink_header_sdt_cells(body):
     for tr in header_tbl.findall(f"{{{W}}}tr"):
         trPr = tr.find(f"{{{W}}}trPr")
         if trPr is None:
-            trPr = etree.SubElement(tr, f"{{{W}}}trPr")
-            tr.insert(0, trPr)
+            trPr = etree.SubElement(tr, f"{{{W}}}trPr"); tr.insert(0, trPr)
         for trH in trPr.findall(f"{{{W}}}trHeight"):
             trPr.remove(trH)
         trH = etree.SubElement(trPr, f"{{{W}}}trHeight")
-        trH.set(f"{{{W}}}val",   HEADER_ROW_HEIGHT)
-        trH.set(f"{{{W}}}hRule", "exact")
+        trH.set(f"{{{W}}}val", HEADER_ROW_HEIGHT); trH.set(f"{{{W}}}hRule", "exact")
         for tc in tr.findall(f"{{{W}}}tc"):
             has_sdt = bool(tc.find(f".//{{{W}}}sdt"))
             tcPr = tc.find(f"{{{W}}}tcPr")
             if tcPr is None:
-                tcPr = etree.SubElement(tc, f"{{{W}}}tcPr")
-                tc.insert(0, tcPr)
+                tcPr = etree.SubElement(tc, f"{{{W}}}tcPr"); tc.insert(0, tcPr)
             tcW = tcPr.find(f"{{{W}}}tcW")
             if tcW is None:
                 tcW = etree.SubElement(tcPr, f"{{{W}}}tcW")
@@ -1059,20 +1316,17 @@ def _shrink_header_sdt_cells(body):
                 el.set(f"{{{W}}}type", "dxa")
             for va in tcPr.findall(f"{{{W}}}vAlign"):
                 tcPr.remove(va)
-            vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign")
-            vAlign.set(f"{{{W}}}val", "top")
+            vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign"); vAlign.set(f"{{{W}}}val", "top")
             for p in tc.iter(f"{{{W}}}p"):
                 pPr = p.find(f"{{{W}}}pPr")
                 if pPr is None:
-                    pPr = etree.SubElement(p, f"{{{W}}}pPr")
-                    p.insert(0, pPr)
+                    pPr = etree.SubElement(p, f"{{{W}}}pPr"); p.insert(0, pPr)
                 for sp in pPr.findall(f"{{{W}}}spacing"):
                     pPr.remove(sp)
                 sp_el = etree.SubElement(pPr, f"{{{W}}}spacing")
-                sp_el.set(f"{{{W}}}before",   "0")
-                sp_el.set(f"{{{W}}}after",    "0")
-                sp_el.set(f"{{{W}}}line",     "240")
-                sp_el.set(f"{{{W}}}lineRule", "auto")
+                sp_el.set(f"{{{W}}}before", "0"); sp_el.set(f"{{{W}}}after", "0")
+                sp_el.set(f"{{{W}}}line",   "240"); sp_el.set(f"{{{W}}}lineRule", "auto")
+
 
 def _fill_equipment_row(row_el, equipment, serial, asset_tag, remarks):
     cells = []
@@ -1089,6 +1343,7 @@ def _fill_equipment_row(row_el, equipment, serial, asset_tag, remarks):
             continue
         _set_cell_text(cell, text)
 
+
 def fill_template(
     sorted_rows: list[dict],
     employee_name: str,
@@ -1103,7 +1358,7 @@ def fill_template(
     if tpl is None:
         raise FileNotFoundError(
             f"Template not found: '{template_filename}'. "
-            f"Place it inside the src/ folder next to this script."
+            "Place it inside the src/ folder next to this script."
         )
     with zipfile.ZipFile(io.BytesIO(tpl.read_bytes())) as zin:
         files = {n: zin.read(n) for n in zin.namelist()}
@@ -1129,7 +1384,6 @@ def fill_template(
         data_rows    = all_rows[1:]
         template_row = copy.deepcopy(data_rows[0]) if data_rows else None
         num_assets   = len(sorted_rows)
-
         for i, asset in enumerate(sorted_rows):
             if i < len(data_rows):
                 row_el = data_rows[i]
@@ -1142,7 +1396,6 @@ def fill_template(
                 eq_table.append(new_row)
                 _fill_equipment_row(new_row, asset["equipment"], asset["serial"],
                                     asset["asset_tag"], asset["remarks"])
-
         all_rows_now = eq_table.findall(f"{{{W}}}tr")
         for extra_row in all_rows_now[1 + num_assets:]:
             eq_table.remove(extra_row)
@@ -1172,6 +1425,7 @@ def render_header():
     </div>
     """, unsafe_allow_html=True)
 
+
 def step_open(num: int, title: str, desc: str = ""):
     desc_html = f'<div class="step-desc">{desc}</div>' if desc else ""
     st.markdown(f"""
@@ -1183,76 +1437,322 @@ def step_open(num: int, title: str, desc: str = ""):
       {desc_html}
     """, unsafe_allow_html=True)
 
+
 def step_close():
     st.markdown("</div>", unsafe_allow_html=True)
 
+
 def _safe_periph_key(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
+
+# ─────────────────────────────────────────────
+# PREPARED-BY USER MANAGEMENT UI
+# ─────────────────────────────────────────────
+
+def render_prepared_by_section() -> str:
+    st.markdown("""
+    <div class="preparedby-card">
+      <div class="preparedby-icon">&#x270F;&#xFE0F;</div>
+      <div>
+        <div class="preparedby-label">Prepared By</div>
+        <div class="preparedby-hint">IT staff member preparing this form — auto-filled in the document.</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    options = get_prepared_by_options()
+    col_sel, col_mgr = st.columns([3, 1])
+    with col_sel:
+        prepared_by = st.selectbox(
+            "Select IT staff", options=options, index=0,
+            label_visibility="collapsed", key="prepared_by_select",
+        )
+    with col_mgr:
+        if "show_user_mgr" not in st.session_state:
+            st.session_state["show_user_mgr"] = False
+        mgr_label = "▲ Manage" if st.session_state["show_user_mgr"] else "▼ Manage"
+        if st.button(mgr_label, key="btn_toggle_user_mgr", use_container_width=True):
+            st.session_state["show_user_mgr"] = not st.session_state["show_user_mgr"]
+            st.rerun()
+
+    if st.session_state.get("show_user_mgr"):
+        _render_user_manager(options)
+
+    return prepared_by
+
+
+def _render_user_manager(options: list[str]):
+    st.markdown("""
+    <div class="user-reg-panel">
+      <div class="user-reg-title">&#x1F464; Manage IT Staff List</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    chips_html = ""
+    for u in options:
+        is_default = u in DEFAULT_PREPARED_BY
+        chip_cls   = "user-chip default-chip" if is_default else "user-chip"
+        lock_icon  = " 🔒" if is_default else ""
+        chips_html += f'<span class="{chip_cls}">{u}{lock_icon}</span>'
+    st.markdown(
+        f'<div style="margin-bottom:0.55rem">'
+        f'<div style="font-size:0.7rem;font-weight:700;color:#5a6e8a;text-transform:uppercase;'
+        f'letter-spacing:.06em;margin-bottom:6px;">Current staff</div>'
+        f'<div class="user-chip-wrap">{chips_html}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ── Add New Staff ─────────────────────────────────────────────────────────
+    add_col, add_btn_col = st.columns([3, 1])
+    with add_col:
+        new_name = st.text_input(
+            "Add New Staff",
+            placeholder="Full name, e.g. Maria Santos",
+            key="new_user_name_input",
+        )
+    with add_btn_col:
+        st.write("")
+        st.markdown('<div class="btn-outline-blue">', unsafe_allow_html=True)
+        if st.button("Add", key="btn_add_user", use_container_width=True):
+            ok, msg = add_prepared_by_user(new_name)
+            if ok:
+                st.success(msg)
+                st.session_state.pop("new_user_name_input", None)
+                st.rerun()
+            else:
+                st.error(msg)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Remove Staff ──────────────────────────────────────────────────────────
+    removable = [u for u in options if u not in DEFAULT_PREPARED_BY]
+    if removable:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        rm_col, rm_btn_col = st.columns([3, 1])
+        with rm_col:
+            to_remove = st.selectbox(
+                "Remove Staff",
+                options=removable,
+                key="remove_user_select",
+            )
+        with rm_btn_col:
+            st.write("")
+            st.markdown('<div class="btn-danger">', unsafe_allow_html=True)
+            if st.button("Remove", key="btn_remove_user", use_container_width=True):
+                ok, msg = remove_prepared_by_user(to_remove)
+                if ok:
+                    st.success(msg); st.rerun()
+                else:
+                    st.error(msg)
+            st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.caption("Only default staff shown — add a custom name above to enable removal.")
+
+# ─────────────────────────────────────────────
+# CSV UPLOAD UI
+# ─────────────────────────────────────────────
+
+def render_csv_upload() -> tuple[pd.DataFrame | None, str]:
+    uploaded = st.file_uploader(
+        "Upload asset list",
+        type=["csv", "xlsx", "xls"],
+        label_visibility="collapsed",
+        key="csv_upload",
+    )
+
+    if uploaded is None:
+        st.markdown(
+            '<div class="info-hint">'
+            '<strong>Tip:</strong> Export your asset list from SharePoint or Excel as a '
+            '<strong>.csv</strong> or <strong>.xlsx</strong> file, then upload it here.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return None, ""
+
+    try:
+        if uploaded.name.lower().endswith((".xlsx", ".xls")):
+            df = pd.read_excel(uploaded)
+            label = f"{uploaded.name} · {len(df):,} rows"
+        else:
+            raw = uploaded.read()
+            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+                try:
+                    df = pd.read_csv(io.BytesIO(raw), encoding=enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                st.error("Could not decode the CSV file. Try saving it as UTF-8.")
+                return None, ""
+            label = f"{uploaded.name} · {len(df):,} rows"
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
+        return None, ""
+
+    if df.empty:
+        st.warning("The uploaded file appears to be empty.")
+        return None, ""
+
+    st.markdown(
+        f'<div class="csv-source-bar">✅&nbsp; <span>{label}</span></div>',
+        unsafe_allow_html=True,
+    )
+    return df, label
 
 # ─────────────────────────────────────────────
 # FORM TYPE SELECTOR
 # ─────────────────────────────────────────────
 
 def render_form_type_selector() -> str:
-    """
-    Visual card + radio selector for WFH vs On-Site.
-    Returns "wfh" or "onsite".
-    Switching clears any previously generated document so the download
-    button always matches the selected template.
-    """
     if "form_type" not in st.session_state:
         st.session_state["form_type"] = "wfh"
-
     current = st.session_state["form_type"]
 
     wfh_tpl    = _find_template(WFH_TEMPLATE_NAME)
     onsite_tpl = _find_template(ONSITE_TEMPLATE_NAME)
 
-    def _missing(found):
-        return "" if found else \
-            " <span style='color:#e65c00;font-size:0.7rem;font-weight:400;'>(template missing)</span>"
+    col_wfh, col_onsite = st.columns(2)
+    with col_wfh:
+        wfh_css = "wfh-active" if current == "wfh" else "wfh-inactive"
+        st.markdown(f'<div class="form-toggle-btn {wfh_css}">', unsafe_allow_html=True)
+        wfh_label = "Work From Home" + ("" if wfh_tpl else "  (template missing)")
+        if st.button(wfh_label, key="btn_wfh", use_container_width=True):
+            if current != "wfh":
+                st.session_state["form_type"] = "wfh"
+                for k in ("docx", "form_name", "form_client", "form_date",
+                          "prepared_by", "form_type_used"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    wfh_css    = "active-wfh"    if current == "wfh"    else ""
-    onsite_css = "active-onsite" if current == "onsite" else ""
-    wfh_badge    = '<span class="form-type-badge badge-wfh">Selected</span>'    if current == "wfh"    else ""
-    onsite_badge = '<span class="form-type-badge badge-onsite">Selected</span>' if current == "onsite" else ""
+    with col_onsite:
+        onsite_css = "onsite-active" if current == "onsite" else "onsite-inactive"
+        st.markdown(f'<div class="form-toggle-btn {onsite_css}">', unsafe_allow_html=True)
+        onsite_label = "Work On Site" + ("" if onsite_tpl else "  (template missing)")
+        if st.button(onsite_label, key="btn_onsite", use_container_width=True):
+            if current != "onsite":
+                st.session_state["form_type"] = "onsite"
+                for k in ("docx", "form_name", "form_client", "form_date",
+                          "prepared_by", "form_type_used"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    return st.session_state["form_type"]
+
+# ─────────────────────────────────────────────
+# MONITOR CABLE + ADAPTER RENDERER
+# ─────────────────────────────────────────────
+
+def render_monitor_cable_block(mon_idx: int, mon_label: str) -> list[dict]:
+    assignments: list[dict] = []
 
     st.markdown(f"""
-    <div class="form-type-selector">
-      <div class="form-type-card {wfh_css}">
-        <span class="form-type-icon">🏠</span>
-        <div class="form-type-label">Work From Home{_missing(wfh_tpl)}</div>
-        <div class="form-type-desc">For employees taking equipment home to work remotely.</div>
-        {wfh_badge}
-      </div>
-      <div class="form-type-card {onsite_css}">
-        <span class="form-type-icon">🏢</span>
-        <div class="form-type-label">Work On Site{_missing(onsite_tpl)}</div>
-        <div class="form-type-desc">For employees assigned equipment at the office.</div>
-        {onsite_badge}
+    <div class="monitor-block">
+      <div class="monitor-block-header">
+        <div class="monitor-block-icon">&#x1F5A5;</div>
+        <div>
+          <div class="monitor-block-title">Monitor {mon_idx + 1}</div>
+          <div class="monitor-block-sub">{mon_label}</div>
+        </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    choice = st.radio(
-        "Select form type",
-        options=["🏠  Work From Home", "🏢  Work On Site"],
-        index=0 if current == "wfh" else 1,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="form_type_radio",
-    )
+    with st.container():
+        st.markdown(
+            '<div style="margin-top:-0.6rem;border:1px solid #d0dce8;'
+            'border-top:none;border-radius:0 0 12px 12px;'
+            'background:#ffffff;overflow:hidden;margin-bottom:0.85rem;">',
+            unsafe_allow_html=True,
+        )
 
-    new_type = "wfh" if "Home" in choice else "onsite"
-    if new_type != current:
-        st.session_state["form_type"] = new_type
-        # Clear stale generated document when template switches
-        for k in ("docx", "form_name", "form_client", "form_date",
-                  "prepared_by", "form_type_used"):
-            st.session_state.pop(k, None)
-        st.rerun()
+        for cable_name, cable_seq, adapter_options in MONITOR_PERIPHERALS:
+            ckey = f"cable_mon{mon_idx}_{_safe_periph_key(cable_name)}"
+            if ckey not in st.session_state:
+                st.session_state[ckey] = False
 
-    return st.session_state["form_type"]
+            st.markdown('<div style="border-bottom:1px solid #edf1f7;">', unsafe_allow_html=True)
+            is_checked = st.checkbox(cable_name, key=ckey)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            chosen_adapter = ""
+            if is_checked and adapter_options:
+                akey    = f"adapter_mon{mon_idx}_{_safe_periph_key(cable_name)}"
+                sel_key = f"sel_{akey}"
+                if sel_key not in st.session_state:
+                    st.session_state[sel_key] = "none"
+                current_adapter = st.session_state.get(sel_key, "none")
+
+                chips_html = ""
+                none_cls = "adapter-chip-none chip-selected" if current_adapter == "none" else "adapter-chip-none"
+                chips_html += (
+                    f'<button class="{none_cls}" '
+                    f'onclick="setAdapter(\'{akey}\', \'none\')">No adapter</button>'
+                )
+                for opt in adapter_options:
+                    opt_key = opt.replace("'", "\\'")
+                    cls = "adapter-chip chip-selected" if current_adapter == opt else "adapter-chip"
+                    chips_html += (
+                        f'<button class="{cls}" '
+                        f'onclick="setAdapter(\'{akey}\', \'{opt_key}\')">{opt}</button>'
+                    )
+
+                st.markdown(f"""
+                <div class="adapter-chip-panel" id="panel_{akey}">
+                  <div class="adapter-chip-header">
+                    <div class="adapter-chip-dot"></div>
+                    <span class="adapter-chip-label">Adapter needed?</span>
+                  </div>
+                  <div class="adapter-chips-wrap" id="chips_{akey}">
+                    {chips_html}
+                  </div>
+                </div>
+                <script>
+                function setAdapter(key, val) {{
+                    const wrap = document.getElementById('chips_' + key);
+                    if (!wrap) return;
+                    wrap.querySelectorAll('button').forEach(btn => btn.classList.remove('chip-selected'));
+                    event.target.classList.add('chip-selected');
+                    sessionStorage.setItem('adapter_' + key, val);
+                }}
+                (function() {{
+                    const stored = sessionStorage.getItem('adapter_{akey}');
+                    if (!stored) return;
+                    const wrap = document.getElementById('chips_{akey}');
+                    if (!wrap) return;
+                    wrap.querySelectorAll('button').forEach(btn => {{
+                        btn.classList.remove('chip-selected');
+                        const m = btn.getAttribute('onclick').match({_JS_ONCLICK_REGEX});
+                        if (m && m[1] === stored) btn.classList.add('chip-selected');
+                    }});
+                }})();
+                </script>
+                """, unsafe_allow_html=True)
+
+                st.markdown('<div style="display:none;">', unsafe_allow_html=True)
+                adapter_opts_full = ["none"] + list(adapter_options)
+                chosen_raw = st.selectbox(
+                    f"_adapter_{akey}", options=adapter_opts_full,
+                    key=sel_key, label_visibility="collapsed",
+                )
+                chosen_adapter = "" if chosen_raw == "none" else chosen_raw
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            if is_checked:
+                assignments.append({
+                    "monitor_label": mon_label,
+                    "monitor_idx":   mon_idx,
+                    "cable_name":    cable_name,
+                    "cable_seq":     cable_seq,
+                    "adapter_name":  chosen_adapter,
+                })
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    return assignments
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -1261,47 +1761,37 @@ def render_form_type_selector() -> str:
 def main():
     render_header()
 
-    # ── Form Type Selector ────────────────────────────────────────────────────
+    # ── Form Type ─────────────────────────────────────────────────────────────
     st.markdown(
-        '<div style="font-size:0.72rem;font-weight:700;color:#5a6e8a;'
-        'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">'
-        'Form Type</div>'
-        '<div style="font-size:0.8rem;color:#5a6e8a;margin-bottom:0.6rem;line-height:1.5;">'
-        'Choose which accountability form template to generate.'
-        '</div>',
+        '<div style="font-size:0.7rem;font-weight:700;color:#5a6e8a;'
+        'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.3rem;">'
+        'Form Type</div>',
         unsafe_allow_html=True,
     )
-
     form_type = render_form_type_selector()
 
-    # Resolve template path for the selected type
     if form_type == "wfh":
-        tpl_path       = _find_template(WFH_TEMPLATE_NAME)
-        type_label     = "Work From Home"
-        type_color     = "#1565c0"
-        type_bg        = "#e8f0fc"
-        type_icon      = "🏠"
-        type_short     = "WFH"
+        tpl_path   = _find_template(WFH_TEMPLATE_NAME)
+        type_label = "Work From Home"
+        type_color = "#1565c0"
+        type_bg    = "#e8f0fc"
     else:
-        tpl_path       = _find_template(ONSITE_TEMPLATE_NAME)
-        type_label     = "Work On Site"
-        type_color     = "#00796b"
-        type_bg        = "#e0f2f1"
-        type_icon      = "🏢"
-        type_short     = "On Site"
+        tpl_path   = _find_template(ONSITE_TEMPLATE_NAME)
+        type_label = "Work On Site"
+        type_color = "#00796b"
+        type_bg    = "#e0f2f1"
 
     if tpl_path is None:
         st.error(
-            f"⚠️ Template not found for **{type_label}**. "
-            f"Place the `.dotx` file inside the **src/** folder and refresh.\n\n"
-            f"Expected: `{'Equipment Accountability Form (Work From Home).dotx' if form_type == 'wfh' else 'Equipment Accountability Form (Work On Site).dotx'}`"
+            f"Template not found for **{type_label}**. "
+            "Place the `.dotx` file inside the **src/** folder and refresh."
         )
     else:
         st.markdown(
-            f'<div style="font-size:0.76rem;color:{type_color};background:{type_bg};'
+            f'<div style="font-size:0.75rem;color:{type_color};background:{type_bg};'
             f'border-left:3px solid {type_color};border-radius:0 6px 6px 0;'
-            f'padding:0.4rem 0.75rem;margin-bottom:0.8rem;">'
-            f'{type_icon} Using template: <strong>{type_label}</strong>'
+            f'padding:0.38rem 0.7rem;margin:0.5rem 0 0.8rem;">'
+            f'Using template: <strong>{type_label}</strong>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -1309,49 +1799,16 @@ def main():
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # ── Prepared By ───────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="preparedby-card">
-      <div class="preparedby-icon">🖊️</div>
-      <div>
-        <div class="preparedby-label">Prepared By</div>
-        <div class="preparedby-hint">Select the IT staff member preparing this form — their name will be auto-filled in the <strong>Prepared by</strong> section of the document.</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    prepared_by = render_prepared_by_section()
+    st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
 
-    prepared_by = st.selectbox(
-        "Select IT staff",
-        options=PREPARED_BY_OPTIONS,
-        index=0,
-        label_visibility="collapsed",
-        key="prepared_by_select",
-    )
-
-    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-
-    # ── Step 1: Upload ────────────────────────────────────────────────────────
+    # ── Step 1: Upload CSV ────────────────────────────────────────────────────
     step_open(1, "Upload Asset List",
-              "Export your SharePoint asset list as CSV (Export → Export to CSV) and upload it below.")
-    uploaded = st.file_uploader("CSV file", type=["csv"], label_visibility="collapsed")
+              "Upload a CSV or Excel file exported from SharePoint or your asset tracker.")
+    df, csv_label = render_csv_upload()
     step_close()
 
-    if not uploaded:
-        st.markdown("""
-        <div style="text-align:center;padding:2.5rem 1rem;color:#5a6e8a;font-size:0.84rem;
-                    background:#fff;border:1px solid #d0dce8;border-radius:10px;margin-top:.5rem;">
-            Upload your SharePoint CSV export above to get started
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    with st.spinner("Reading file…"):
-        df, error = load_csv(uploaded)
-
-    if error:
-        st.error(f"Could not read the file: {error}")
-        return
-    if df.empty:
-        st.warning("The file is empty. Please check your export and try again.")
+    if df is None:
         return
 
     auto    = detect_columns(df)
@@ -1364,31 +1821,22 @@ def main():
     position_col = detect_position_column(df)
 
     if not user_col:
-        st.error('Could not find a "Current User" column. Make sure your CSV was exported from SharePoint with standard column names.')
+        st.error(
+            'Could not find a "Current User" column. '
+            'Make sure your file has a column named "Current User" (or similar).'
+        )
         return
 
-    st.success(f"✓ &nbsp;**{len(df):,}** records loaded from **{uploaded.name}**")
     if position_col:
-        st.caption(f"Position column detected: **{position_col}**")
+        st.caption(f"{len(df):,} records · Position column: {position_col}")
     else:
-        st.caption("ℹ️ No Position/Job Title column detected in this CSV.")
+        st.caption(f"{len(df):,} records · No position column detected")
 
     # ── Step 2: Search ────────────────────────────────────────────────────────
     step_open(2, "Find Employee",
-              "Type any part of the name — first name, last name, or partial words.")
-    st.markdown(
-        '<div class="search-hint">'
-        '💡 <strong>How search works:</strong> You can type any part of a name — '
-        'first name only, last name only, or a combination in any order. '
-        'Partial words are supported, so short fragments will still return results. '
-        'Names stored with commas (e.g. Last, First Middle format) are matched even if you '
-        'type the first name first. Results are ranked by match quality — '
-        'closest matches appear at the top.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+              "Type any part of a name — partial words and any order are supported.")
     search = st.text_input(
-        "Search", placeholder="Type a name to search…",
+        "Search", placeholder="e.g. Juan Dela Cruz or just 'juan'...",
         label_visibility="collapsed",
     )
     step_close()
@@ -1400,32 +1848,29 @@ def main():
     results, df_by_name = smart_search(df, user_col, search)
 
     if not results:
-        st.warning(f'No records found for "{search.strip()}". Try a shorter name or check spelling.')
+        st.warning(f'No records found for "{search.strip()}". Try a shorter or different name.')
         return
 
     top_results    = [r for r in results if r["tier"] <= 1]
     strong_results = [r for r in results if 2 <= r["tier"] <= 3]
     weak_results   = [r for r in results if r["tier"] >= 4]
-    st.caption(f"{len(results)} result(s) — select an employee to continue")
 
     def make_label(item):
         count = len(df_by_name.get(item["name"], pd.DataFrame()))
         return f"{item['name']}  [{item['label']}]  ({count} asset{'s' if count != 1 else ''})"
 
-    ordered  = top_results + strong_results + weak_results
-    options  = [make_label(r) for r in ordered]
-    name_map = {make_label(r): r["name"] for r in ordered}
+    ordered       = top_results + strong_results + weak_results
+    options       = [make_label(r) for r in ordered]
+    name_map      = {make_label(r): r["name"] for r in ordered}
 
-    if len(options) == 1:
+    if len(options) == 1 and ordered[0]["tier"] <= 1:
         chosen_display = options[0]
-        if ordered[0]["tier"] <= 1:
-            st.success("✓ &nbsp;One match found.")
-        else:
-            st.info(f"Closest result found ({ordered[0]['label']}). Confirm the selection below.")
+        st.success(f"Matched: **{ordered[0]['name']}**")
     else:
+        st.caption(f"{len(results)} result(s)")
         chosen_display = st.selectbox(
             "Select employee", options,
-            help="Names ranked by match quality — exact matches appear first.",
+            help="Ranked by match quality — exact matches first.",
         )
 
     chosen_name = name_map[chosen_display]
@@ -1437,13 +1882,13 @@ def main():
 
     chosen_result = next((r for r in results if r["name"] == chosen_name), None)
     if chosen_result and chosen_result["tier"] >= 4:
-        st.info(f"Showing results for the selected name ({chosen_result['label']} for your search). Not the right person? Select a different name above.")
+        st.info("Closest result for your search. Not right? Select a different name above.")
     else:
-        st.success(f"✓ &nbsp;**{len(df_filtered)}** asset(s) found.")
+        st.success(f"**{len(df_filtered)}** asset(s) found for {chosen_name}.")
 
-    # ── Step 3: Select CSV assets ─────────────────────────────────────────────
-    step_open(3, "Select Assets from SharePoint",
-              "Choose the equipment items from the asset list to include on the accountability form.")
+    # ── Step 3: Select Assets ─────────────────────────────────────────────────
+    step_open(3, "Select Assets",
+              "Choose the items from the asset list to include on the form.")
 
     sel_key = f"sel_{chosen_name.lower().replace(' ', '_')}"
     if sel_key not in st.session_state:
@@ -1454,14 +1899,14 @@ def main():
 
     col_a, col_b, _ = st.columns([1, 1, 5])
     with col_a:
-        st.markdown('<div class="small-btn">', unsafe_allow_html=True)
+        st.markdown('<div class="btn-outline-blue">', unsafe_allow_html=True)
         if st.button("Select All", key="sp_select_all"):
             for idx in df_filtered.index:
                 st.session_state[sel_key][idx] = True
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with col_b:
-        st.markdown('<div class="small-btn">', unsafe_allow_html=True)
+        st.markdown('<div class="btn-outline-blue">', unsafe_allow_html=True)
         if st.button("Clear All", key="sp_clear_all"):
             for idx in df_filtered.index:
                 st.session_state[sel_key][idx] = False
@@ -1511,134 +1956,83 @@ def main():
             selected_monitors.append({"label": label, "idx": monitor_counter})
             monitor_counter += 1
 
-    # ── Step 4: Peripherals ───────────────────────────────────────────────────
-    step_open(4, "Add Peripherals",
-              "Select simple accessories and assign cables to specific monitors.")
+    # ── Step 4: Cables & Adapters ─────────────────────────────────────────────
+    step_open(4, "Monitor Cables & Adapters",
+              "A charger is automatically included. Select cables and adapters for each monitor.")
+    st.markdown('<div class="charger-badge">Charger automatically included</div>', unsafe_allow_html=True)
 
-    st.markdown("**Generic Accessories**")
-
-    for periph_name, _ in SIMPLE_PERIPHERALS:
-        pkey = f"chk_simple_{_safe_periph_key(periph_name)}"
-        if pkey not in st.session_state:
-            st.session_state[pkey] = False
-
-    col_sa, col_ca, _ = st.columns([1, 1, 5])
-    with col_sa:
-        st.markdown('<div class="small-btn">', unsafe_allow_html=True)
-        if st.button("Select All", key="simple_select_all"):
-            for periph_name, _ in SIMPLE_PERIPHERALS:
-                st.session_state[f"chk_simple_{_safe_periph_key(periph_name)}"] = True
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with col_ca:
-        st.markdown('<div class="small-btn">', unsafe_allow_html=True)
-        if st.button("Clear All", key="simple_clear_all"):
-            for periph_name, _ in SIMPLE_PERIPHERALS:
-                st.session_state[f"chk_simple_{_safe_periph_key(periph_name)}"] = False
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    simple_extra_rows: list[dict] = []
-    col1, col2, col3 = st.columns(3)
-    grid_cols = [col1, col2, col3]
-    for i, (periph_name, periph_type) in enumerate(SIMPLE_PERIPHERALS):
-        pkey = f"chk_simple_{_safe_periph_key(periph_name)}"
-        with grid_cols[i % 3]:
-            is_checked = st.checkbox(periph_name, key=pkey,
-                                     value=st.session_state.get(pkey, False))
-        if is_checked:
-            simple_extra_rows.append({
-                "name": periph_name, "brand": "", "model": "",
-                "type": periph_type, "serial": "", "asset_tag": "", "remarks": "",
-            })
-
-    # ── Per-monitor cables ────────────────────────────────────────────────────
     monitor_cable_assignments: list[dict] = []
-
     if selected_monitors:
+        st.caption("Tick which cables came with each monitor, then pick an adapter if needed.")
+        for mon in selected_monitors:
+            assignments = render_monitor_cable_block(mon["idx"], mon["label"])
+            monitor_cable_assignments.extend(assignments)
+    elif not df_selected.empty:
         st.markdown(
-            "<div style='margin-top:1.1rem;margin-bottom:0.3rem;"
-            "font-size:0.9rem;font-weight:700;color:var(--navy,#0d2545);'>"
-            "Monitor Cables &amp; Adapters</div>",
+            '<div style="font-size:0.8rem;color:#5a6e8a;padding:0.4rem 0;">'
+            'No monitors in the selected assets — cable section not applicable.'
+            '</div>',
             unsafe_allow_html=True,
         )
-        st.caption("Each monitor is listed separately. Tick which cables/adapters came with that specific monitor.")
-
-        for mon in selected_monitors:
-            mon_label = mon["label"]
-            mon_idx   = mon["idx"]
-            st.markdown(
-                f'<div class="monitor-group-header">'
-                f'🖥️ Monitor {mon_idx + 1}'
-                f'<span style="font-weight:400;color:#5a6e8a;margin-left:4px;">— {mon_label}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown('<div class="monitor-group-body">', unsafe_allow_html=True)
-            cable_cols = st.columns(3)
-            for ci, (cable_name, cable_type, cable_seq) in enumerate(MONITOR_PERIPHERALS):
-                ckey = f"chk_mon{mon_idx}_{_safe_periph_key(cable_name)}"
-                if ckey not in st.session_state:
-                    st.session_state[ckey] = False
-                with cable_cols[ci % 3]:
-                    is_checked = st.checkbox(cable_name, key=ckey,
-                                             value=st.session_state.get(ckey, False))
-                if is_checked:
-                    monitor_cable_assignments.append({
-                        "monitor_label": mon_label,
-                        "monitor_idx":   mon_idx,
-                        "cable_name":    cable_name,
-                        "cable_seq":     cable_seq,
-                    })
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    elif not df_selected.empty:
-        st.caption("ℹ️ No monitors in the selected assets — monitor cable section not shown.")
 
     step_close()
 
+    # ── Remarks ───────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="remarks-wrap">
+      <div class="remarks-label">Remarks</div>
+      <div class="remarks-hint">Appears on the first row of the form, covering the entire equipment list.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    shared_remarks = st.text_input(
+        "Remarks",
+        placeholder="e.g. All items in good condition, for WFH use",
+        label_visibility="collapsed",
+        key="shared_remarks",
+    )
+
     # ── Build sorted rows ─────────────────────────────────────────────────────
     sorted_rows = sort_assets_by_sequence(
-        df_selected, col_map, simple_extra_rows, monitor_cable_assignments,
+        df_selected, col_map, monitor_cable_assignments, shared_remarks,
     )
 
     if not sorted_rows:
-        st.info("Select at least one asset or peripheral to continue.")
+        st.info("Select at least one asset to continue.")
         return
 
-    cable_count = len(monitor_cable_assignments)
-    st.caption(
-        f"**{len(checked)}** SharePoint asset(s)"
-        + f" + **{len(simple_extra_rows)}** accessory/accessories"
-        + (f" + **{cable_count}** monitor cable(s)" if cable_count else "")
-        + f" = **{len(sorted_rows)}** total item(s)"
+    cable_count   = len(monitor_cable_assignments)
+    adapter_count = sum(
+        1 for a in monitor_cable_assignments
+        if a.get("adapter_name") and a["adapter_name"] not in ("", "none", "No Adapter Needed")
     )
+    summary_parts = [f"**{len(checked)}** asset(s)", "**1** charger"]
+    if cable_count:
+        summary_parts.append(f"**{cable_count}** cable(s)")
+    if adapter_count:
+        summary_parts.append(f"**{adapter_count}** adapter(s)")
+    st.caption(" + ".join(summary_parts) + f" = **{len(sorted_rows)}** total items on form")
 
-    with st.expander("📋 Preview — Sorted Form Order", expanded=False):
+    with st.expander("Preview — Form Order", expanded=False):
         st.markdown(
             '<table class="preview-table"><thead><tr>'
-            '<th>#</th><th>Equipment (Brand Model Type)</th>'
-            '<th>Serial</th><th>Asset Tag</th><th>Remarks</th>'
+            '<th>#</th><th>Equipment</th><th>Serial</th><th>Asset Tag</th><th>Remarks</th>'
             '</tr></thead><tbody>' +
             "".join(
-                f'<tr>'
-                f'<td><span class="seq-badge">{i+1}</span></td>'
+                f'<tr><td><span class="seq-badge">{i+1}</span></td>'
                 f'<td>{row["equipment"]}</td><td>{row["serial"]}</td>'
-                f'<td>{row["asset_tag"]}</td><td>{row["remarks"]}</td>'
-                f'</tr>'
+                f'<td>{row["asset_tag"]}</td><td>{row["remarks"]}</td></tr>'
                 for i, row in enumerate(sorted_rows)
             ) +
             "</tbody></table>",
             unsafe_allow_html=True,
         )
 
-    # ── Step 5: Form details ──────────────────────────────────────────────────
+    # ── Step 5: Form Details ──────────────────────────────────────────────────
     step_open(5, "Form Details",
-              "These fields appear in the header of the generated document. Edit as needed.")
+              "Header fields for the generated document — auto-filled from the asset data.")
 
     default_client = ""
     default_pos    = ""
-
     if not df_selected.empty:
         first_row = df_selected.iloc[0]
         if client_col and client_col in df_selected.columns:
@@ -1668,11 +2062,11 @@ def main():
     step_open(6, "Generate Document", "")
 
     st.markdown(
-        f'<div class="search-hint" style="margin-bottom:1rem;">'
-        f'✏️ <strong>Prepared by:</strong> {prepared_by} &nbsp;·&nbsp; '
+        f'<div class="info-hint">'
+        f'<strong>Prepared by:</strong> {prepared_by} &nbsp;·&nbsp; '
         f'<strong>Employee:</strong> {chosen_name} &nbsp;·&nbsp; '
         f'<strong>Items:</strong> {len(sorted_rows)} &nbsp;·&nbsp; '
-        f'{type_icon} <strong>Form:</strong> {type_label}'
+        f'<strong>Form:</strong> {type_label}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -1680,45 +2074,45 @@ def main():
     if tpl_path is None:
         st.error(
             f"Cannot generate — **{type_label}** template not found. "
-            f"Place the .dotx file in the **src/** folder and refresh."
+            "Place the .dotx file in the **src/** folder and refresh."
         )
         step_close()
         return
 
-    if st.button("⬇  Generate Word Document", use_container_width=True, type="primary"):
-        with st.spinner("Filling the form…"):
+    if st.button("Generate Word Document", use_container_width=True, type="primary"):
+        with st.spinner("Filling the form..."):
             try:
-                docx = fill_template(
+                docx_bytes = fill_template(
                     sorted_rows,
                     form_name, form_client, form_position, form_date_str,
                     prepared_by=prepared_by,
                     form_type=form_type,
                 )
-                st.session_state["docx"]          = docx
-                st.session_state["form_name"]     = form_name
-                st.session_state["form_client"]   = form_client
-                st.session_state["form_date"]     = form_date
-                st.session_state["prepared_by"]   = prepared_by
+                st.session_state["docx"]           = docx_bytes
+                st.session_state["form_name"]      = form_name
+                st.session_state["form_client"]    = form_client
+                st.session_state["form_date"]      = form_date
+                st.session_state["prepared_by"]    = prepared_by
                 st.session_state["form_type_used"] = form_type
-                st.success("✓ &nbsp;Document ready — click Download below.")
+                st.success("Document ready — click Download below.")
             except Exception as e:
                 st.error(f"Error: {e}")
 
     if "docx" in st.session_state:
-        _fname       = st.session_state.get("form_name")      or "Employee"
-        _fclient     = st.session_state.get("form_client")    or ""
-        _fdate       = st.session_state.get("form_date")      or datetime.now()
-        _ftype_used  = st.session_state.get("form_type_used") or "wfh"
-        _client_part = f" ({_fclient})" if _fclient else ""
-        _day         = str(int(_fdate.strftime("%d")))
-        _date_part   = _day + _fdate.strftime(" %B %Y")
-        _type_part   = "WFH" if _ftype_used == "wfh" else "On Site"
-        _filename    = (
-            f"Employee Copy - Equipment Accountability Form ({_type_part})"
-            f" - {_fname}{_client_part} _ {_date_part}.docx"
+        _fname      = st.session_state.get("form_name")      or "Employee"
+        _fclient    = st.session_state.get("form_client")    or ""
+        _fdate      = st.session_state.get("form_date")      or datetime.now()
+        _ftype_used = st.session_state.get("form_type_used") or "wfh"
+        _client_p   = f" ({_fclient})" if _fclient else ""
+        _day        = str(int(_fdate.strftime("%d")))
+        _date_p     = _day + _fdate.strftime(" %B %Y")
+        _type_p     = "WFH" if _ftype_used == "wfh" else "On Site"
+        _filename   = (
+            f"Employee Copy - Equipment Accountability Form ({_type_p})"
+            f" - {_fname}{_client_p} _ {_date_p}.docx"
         )
         st.download_button(
-            "📄  Download Word (.docx)",
+            "⬇️ Download Word (.docx)",
             data=st.session_state["docx"],
             file_name=_filename,
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1728,12 +2122,12 @@ def main():
     step_close()
 
     # ── Summary metrics ───────────────────────────────────────────────────────
-    st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:.3rem'></div>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Records",   f"{len(df):,}")
-    c2.metric("Matched",         f"{len(df_filtered):,}")
-    c3.metric("From SharePoint", f"{len(df_selected):,}")
-    c4.metric("On This Form",    f"{len(sorted_rows):,}")
+    c1.metric("Total Records", f"{len(df):,}")
+    c2.metric("Matched",       f"{len(df_filtered):,}")
+    c3.metric("Selected",      f"{len(df_selected):,}")
+    c4.metric("On This Form",  f"{len(sorted_rows):,}")
 
     st.markdown(
         '<div class="bmg-footer">BMG Outsourcing, Inc. &nbsp;·&nbsp; Asset Accountability System</div>',
