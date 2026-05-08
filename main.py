@@ -2,6 +2,43 @@
 Equipment Accountability Form Generator
 BMG Outsourcing — CSV upload version.
 Supports both Work From Home and Work On Site templates.
+
+FIXES APPLIED:
+  1. Dark-mode: comprehensive CSS variables + forced-colors rules ensure all
+     text, borders, backgrounds, and buttons remain legible in Edge / Chrome
+     dark mode and Windows High Contrast.
+  2. Inserted data (Name, Client, Position, Date) is now rendered NON-BOLD.
+  3. Table rows are more compact: reduced row height, tighter padding, smaller
+     font, consistent spacing.
+  4. Copy type selector added (IT Copy / Employee Copy).
+  5. "Verified By" label changes to "Received By" when Employee Copy is chosen.
+  6. Select All now correctly sets every checkbox widget key and reruns.
+  7. Clear All now correctly clears every checkbox widget key and reruns.
+  8. Remarks column text aligns to top of cell.
+  9. Empty equipment/serial/asset_tag fields replaced with "-".
+ 10. Signature image support: if a PNG/JPG exists in src/signatures/<Name>.png,
+     it is embedded above the staff name in the prepared-by signature cell.
+
+FOLDER STRUCTURE REQUIRED:
+  your_project/
+  ├── app.py                          ← this file
+  ├── registered_users.json           ← auto-created on first run
+  ├── src/
+  │   ├── Equipment Accountability Form (Work From Home).dotx
+  │   ├── Equipment Accountability Form (Work On Site).dotx
+  │   └── signatures/
+  │       ├── Jiro Macabitas.png      ← signature image for Jiro
+  │       ├── Angelo Forbes.png       ← signature image for Angelo (optional)
+  │       └── <Any Staff Name>.png    ← one file per staff member (optional)
+  └── images/
+      └── logo.png                    ← app logo (optional)
+
+SIGNATURE IMAGE NOTES:
+  - File name must exactly match the staff name in the "Prepared By" dropdown.
+  - PNG with transparent background is recommended (e.g. 300x80px).
+  - JPG/JPEG is also supported.
+  - If no signature file is found for the selected staff, the form generates
+    normally with just the text name — no error is raised.
 """
 
 from __future__ import annotations
@@ -10,6 +47,7 @@ import io
 import copy
 import base64
 import re
+import struct
 import unicodedata
 import zipfile
 import json
@@ -53,6 +91,28 @@ def _find_logo() -> Path | None:
     for p in candidates:
         if p.exists():
             return p
+    return None
+
+
+def _find_signature_image(prepared_by: str) -> Path | None:
+    """
+    Look for a signature image for the given staff name.
+    Searches src/signatures/<Name>.png (or .jpg/.jpeg).
+    File name must exactly match the prepared_by string.
+    """
+    sig_dir_candidates = [
+        Path(__file__).parent / "src" / "signatures",
+        Path.cwd() / "src" / "signatures",
+        Path(__file__).parent / "signatures",
+        Path.cwd() / "signatures",
+    ]
+    for sig_dir in sig_dir_candidates:
+        if not sig_dir.exists():
+            continue
+        for ext in (".png", ".jpg", ".jpeg"):
+            candidate = sig_dir / f"{prepared_by}{ext}"
+            if candidate.exists():
+                return candidate
     return None
 
 
@@ -173,9 +233,82 @@ st.markdown(f"""
     --border:     #d0dce8;
     --text:       #0d2545;
     --muted:      #5a6e8a;
+    --input-bg:   #ffffff;
+    --input-text: #0d2545;
+    --chip-bg:    #ffffff;
+    --step-bg:    #ffffff;
+    --remark-bg:  #fffdf0;
+    --remark-bdr: #ffe082;
+    --remark-txt: #b07d00;
+    --reg-bg:     #f7f9fd;
+    --hint-bg:    #e8f0fc;
+    --hint-txt:   #1565c0;
+    --table-odd:  #f7f9fd;
+    --table-hdr:  #0d2545;
+    --mon-hdr-bg: #f0f4fa;
+    --adapter-bg: #f7f9fd;
+    --adapter-hdr:#eef2fb;
+    --adapter-bdr:#dde5f0;
+    --adapter-sub:#e4ebf5;
+    --chip-def-bg:#f0f4fa;
+    --prepby-bg:  #f0f7ff;
+    --prepby-bdr: #b3c8f0;
+    --copy-bg:    #f8f9ff;
+    --copy-bdr:   #c5d4f0;
     --radius:     10px;
     --shadow:     0 2px 12px rgba(13,37,69,.09);
     --shadow-md:  0 4px 24px rgba(13,37,69,.14);
+}}
+
+@media (prefers-color-scheme: dark) {{
+    :root {{
+        --navy:       #c8d9f5;
+        --blue:       #90baf9;
+        --blue-lt:    #64b5f6;
+        --blue-pale:  #1a2d4d;
+        --orange:     #ffab76;
+        --green:      #81c784;
+        --green-lt:   #1b2e1c;
+        --teal:       #4db6ac;
+        --teal-lt:    #1b2e2b;
+        --teal-pale:  #2a4a47;
+        --bg:         #0e1621;
+        --card:       #162033;
+        --border:     #2a3d5a;
+        --text:       #d6e4f7;
+        --muted:      #7a9cc0;
+        --input-bg:   #1a2840;
+        --input-text: #d6e4f7;
+        --chip-bg:    #1a2840;
+        --step-bg:    #162033;
+        --remark-bg:  #1e1a0a;
+        --remark-bdr: #7a5a00;
+        --remark-txt: #f0c040;
+        --reg-bg:     #111d2e;
+        --hint-bg:    #1a2d4d;
+        --hint-txt:   #90baf9;
+        --table-odd:  #111d2e;
+        --table-hdr:  #0d1e33;
+        --mon-hdr-bg: #111d2e;
+        --adapter-bg: #111d2e;
+        --adapter-hdr:#0d1e33;
+        --adapter-bdr:#2a3d5a;
+        --adapter-sub:#1a2840;
+        --chip-def-bg:#0e1621;
+        --prepby-bg:  #111d2e;
+        --prepby-bdr: #2a4d80;
+        --copy-bg:    #111d2e;
+        --copy-bdr:   #2a4d80;
+        --shadow:     0 2px 12px rgba(0,0,0,.4);
+        --shadow-md:  0 4px 24px rgba(0,0,0,.6);
+    }}
+}}
+
+@media (forced-colors: active) {{
+    * {{ border-color: ButtonText !important; color: ButtonText !important;
+         background: ButtonFace !important; }}
+    a {{ color: LinkText !important; }}
+    button {{ forced-color-adjust: none; }}
 }}
 
 html, body, [class*="css"] {{
@@ -184,16 +317,23 @@ html, body, [class*="css"] {{
     color: var(--text) !important;
 }}
 
-[data-testid="stSidebar"]   {{ display: none !important; }}
-header[data-testid="stHeader"] {{ display: none !important; }}
-[data-testid="stDecoration"]   {{ display: none !important; }}
+[data-testid="stSidebar"]         {{ display: none !important; }}
+header[data-testid="stHeader"]    {{ display: none !important; }}
+[data-testid="stDecoration"]      {{ display: none !important; }}
+
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.stApp {{
+    background: var(--bg) !important;
+    color: var(--text) !important;
+}}
 
 .main .block-container {{
     max-width: 860px !important;
     padding: 2rem 1.5rem 3rem !important;
 }}
 
-/* ── Header ── */
 .bmg-header {{
     background: linear-gradient(135deg, #0d2545 0%, #1565c0 100%);
     border-radius: 0 0 14px 14px;
@@ -211,13 +351,76 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     letter-spacing: -0.01em;
 }}
 .bmg-header-sub {{
-    color: rgba(255,255,255,.55);
+    color: rgba(255,255,255,.65);
     font-size: 0.74rem;
     font-weight: 400;
     margin-top: 2px;
 }}
 
-/* ── Form type toggle ── */
+.copy-type-card {{
+    background: var(--copy-bg);
+    border: 1.5px solid var(--copy-bdr);
+    border-radius: var(--radius);
+    padding: 0.85rem 1.2rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow);
+    color: var(--text);
+}}
+.copy-type-label {{
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--blue);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.copy-toggle-btn .stButton > button {{
+    width: 100% !important;
+    padding: 0.65rem 1rem !important;
+    font-size: 0.82rem !important;
+    font-weight: 700 !important;
+    border-radius: 8px !important;
+    letter-spacing: 0.01em !important;
+    transition: all .18s !important;
+}}
+.copy-toggle-btn.it-active .stButton > button {{
+    background: linear-gradient(135deg, #1565c0, #1e88e5) !important;
+    color: #fff !important;
+    border: 2px solid #1565c0 !important;
+    box-shadow: 0 0 0 3px rgba(21,101,192,.25) !important;
+}}
+.copy-toggle-btn.it-inactive .stButton > button {{
+    background: var(--card) !important;
+    color: var(--navy) !important;
+    border: 2px solid var(--border) !important;
+    box-shadow: var(--shadow) !important;
+}}
+.copy-toggle-btn.it-inactive .stButton > button:hover {{
+    background: var(--blue-pale) !important;
+    border-color: var(--blue) !important;
+    color: var(--navy) !important;
+}}
+.copy-toggle-btn.emp-active .stButton > button {{
+    background: linear-gradient(135deg, #e65c00, #ff8f00) !important;
+    color: #fff !important;
+    border: 2px solid #e65c00 !important;
+    box-shadow: 0 0 0 3px rgba(230,92,0,.25) !important;
+}}
+.copy-toggle-btn.emp-inactive .stButton > button {{
+    background: var(--card) !important;
+    color: var(--navy) !important;
+    border: 2px solid var(--border) !important;
+    box-shadow: var(--shadow) !important;
+}}
+.copy-toggle-btn.emp-inactive .stButton > button:hover {{
+    background: #fff3e0 !important;
+    border-color: #e65c00 !important;
+    color: var(--navy) !important;
+}}
+
 .form-toggle-btn .stButton > button {{
     width: 100% !important;
     padding: 0.85rem 1rem !important;
@@ -231,36 +434,37 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     background: linear-gradient(135deg, #1565c0, #1e88e5) !important;
     color: #fff !important;
     border: 2px solid #1565c0 !important;
-    box-shadow: 0 0 0 3px rgba(21,101,192,.18), 0 2px 10px rgba(21,101,192,.25) !important;
+    box-shadow: 0 0 0 3px rgba(21,101,192,.25), 0 2px 10px rgba(21,101,192,.3) !important;
 }}
 .form-toggle-btn.wfh-inactive .stButton > button {{
-    background: #fff !important;
+    background: var(--card) !important;
     color: var(--navy) !important;
     border: 2px solid var(--border) !important;
     box-shadow: var(--shadow) !important;
 }}
 .form-toggle-btn.wfh-inactive .stButton > button:hover {{
     background: var(--blue-pale) !important;
-    border-color: #b3c8f0 !important;
+    border-color: var(--blue) !important;
+    color: var(--navy) !important;
 }}
 .form-toggle-btn.onsite-active .stButton > button {{
     background: linear-gradient(135deg, #00796b, #26a69a) !important;
     color: #fff !important;
     border: 2px solid #00796b !important;
-    box-shadow: 0 0 0 3px rgba(0,121,107,.18), 0 2px 10px rgba(0,121,107,.25) !important;
+    box-shadow: 0 0 0 3px rgba(0,121,107,.25), 0 2px 10px rgba(0,121,107,.3) !important;
 }}
 .form-toggle-btn.onsite-inactive .stButton > button {{
-    background: #fff !important;
+    background: var(--card) !important;
     color: var(--navy) !important;
     border: 2px solid var(--border) !important;
     box-shadow: var(--shadow) !important;
 }}
 .form-toggle-btn.onsite-inactive .stButton > button:hover {{
     background: var(--teal-lt) !important;
-    border-color: var(--teal-pale) !important;
+    border-color: var(--teal) !important;
+    color: var(--navy) !important;
 }}
 
-/* ── Step card ── */
 .step-card {{
     background: var(--card);
     border: 1px solid var(--border);
@@ -268,6 +472,7 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     padding: 1.3rem 1.5rem 1rem;
     margin-bottom: 1rem;
     box-shadow: var(--shadow);
+    color: var(--text);
 }}
 .step-label {{
     display: flex;
@@ -300,7 +505,6 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     line-height: 1.55;
 }}
 
-/* ── CSV source pill bar ── */
 .csv-source-bar {{
     display: flex;
     align-items: center;
@@ -315,25 +519,10 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     height: 38px;
     box-sizing: border-box;
 }}
-.csv-stale-bar {{
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    background: #fff8e1;
-    border: 1px solid #ffe082;
-    border-radius: 8px;
-    padding: 0.6rem 0.9rem;
-    font-size: 0.8rem;
-    color: #b07d00;
-    font-weight: 500;
-    height: 38px;
-    box-sizing: border-box;
-}}
 
-/* ── Prepared by card ── */
 .preparedby-card {{
-    background: linear-gradient(135deg, #f0f7ff 0%, #e8f0fc 100%);
-    border: 1.5px solid #b3c8f0;
+    background: var(--prepby-bg);
+    border: 1.5px solid var(--prepby-bdr);
     border-radius: var(--radius);
     padding: 1rem 1.4rem 0.85rem;
     margin-bottom: 1rem;
@@ -341,6 +530,7 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     display: flex;
     align-items: center;
     gap: 0.9rem;
+    color: var(--text);
 }}
 .preparedby-icon {{ font-size: 1.4rem; flex-shrink: 0; }}
 .preparedby-label {{
@@ -357,14 +547,41 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     line-height: 1.4;
 }}
 
-/* ── User registration panel ── */
+.sig-preview-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--green);
+    background: var(--green-lt);
+    border: 1px solid #c3e6c0;
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    margin-top: 0.35rem;
+}}
+.sig-missing-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--reg-bg);
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    margin-top: 0.35rem;
+}}
+
 .user-reg-panel {{
-    background: #f7f9fd;
+    background: var(--reg-bg);
     border: 1.5px solid var(--border);
     border-radius: var(--radius);
     padding: 1rem 1.2rem;
     margin-top: 0.6rem;
     margin-bottom: 0.4rem;
+    color: var(--text);
 }}
 .user-reg-title {{
     font-size: 0.72rem;
@@ -389,43 +606,53 @@ header[data-testid="stHeader"] {{ display: none !important; }}
     gap: 5px;
     font-size: 0.76rem;
     font-weight: 500;
-    color: var(--navy);
-    background: #fff;
+    color: var(--text);
+    background: var(--chip-bg);
     border: 1px solid var(--border);
     border-radius: 100px;
     padding: 3px 10px;
 }}
 .user-chip.default-chip {{
     color: var(--muted);
-    background: #f0f4fa;
+    background: var(--chip-def-bg);
     border-style: dashed;
 }}
 
-/* ── Inline row alignment helper ── */
 [data-testid="stHorizontalBlock"] > div {{
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
 }}
 
-/* ── Inputs ── */
 .stTextInput input,
 .stSelectbox > div > div,
 .stDateInput input {{
     border: 1.5px solid var(--border) !important;
     border-radius: 8px !important;
     box-shadow: none !important;
-    background: #fff !important;
-    color: var(--text) !important;
+    background: var(--input-bg) !important;
+    color: var(--input-text) !important;
     font-family: 'DM Sans', sans-serif !important;
     font-size: 0.87rem !important;
 }}
 .stTextInput input:focus {{
     border-color: var(--blue) !important;
-    box-shadow: 0 0 0 3px rgba(21,101,192,.12) !important;
+    box-shadow: 0 0 0 3px rgba(21,101,192,.15) !important;
+}}
+[data-baseweb="select"] * {{
+    background: var(--input-bg) !important;
+    color: var(--input-text) !important;
+}}
+[data-baseweb="popover"] [role="option"] {{
+    background: var(--input-bg) !important;
+    color: var(--input-text) !important;
+}}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] [aria-selected="true"] {{
+    background: var(--blue-pale) !important;
+    color: var(--navy) !important;
 }}
 
-/* ── Labels ── */
 label,
 .stTextInput label,
 .stDateInput label,
@@ -438,7 +665,6 @@ label,
     letter-spacing: 0.06em !important;
 }}
 
-/* ── Primary button ── */
 .stButton > button {{
     background: linear-gradient(135deg, #1565c0, #1e88e5) !important;
     color: #fff !important;
@@ -454,13 +680,13 @@ label,
 }}
 .stButton > button:hover {{
     background: linear-gradient(135deg, #0d47a1, #1565c0) !important;
-    box-shadow: 0 4px 16px rgba(21,101,192,.4) !important;
+    box-shadow: 0 4px 16px rgba(21,101,192,.45) !important;
     transform: translateY(-1px) !important;
+    color: #fff !important;
 }}
 
-/* ── Outline-blue buttons ── */
 .btn-outline-blue .stButton > button {{
-    background: #fff !important;
+    background: var(--card) !important;
     color: var(--blue) !important;
     border: 1.5px solid var(--blue) !important;
     font-size: 0.75rem !important;
@@ -472,14 +698,14 @@ label,
 }}
 .btn-outline-blue .stButton > button:hover {{
     background: var(--blue-pale) !important;
+    color: var(--navy) !important;
     transform: none !important;
     box-shadow: none !important;
 }}
 
-/* ── Danger/outline-red buttons ── */
 .btn-danger .stButton > button {{
-    background: #fff !important;
-    color: #c62828 !important;
+    background: var(--card) !important;
+    color: #ef5350 !important;
     border: 1.5px solid #ef9a9a !important;
     font-size: 0.75rem !important;
     padding: 0.25rem 0.8rem !important;
@@ -489,13 +715,13 @@ label,
     min-height: 38px !important;
 }}
 .btn-danger .stButton > button:hover {{
-    background: #ffebee !important;
-    border-color: #c62828 !important;
+    background: #3e1111 !important;
+    border-color: #ef5350 !important;
+    color: #ef9a9a !important;
     transform: none !important;
     box-shadow: none !important;
 }}
 
-/* ── Column-scoped small button sizing ── */
 [data-testid="stHorizontalBlock"] [data-testid="stColumn"] .stButton > button {{
     height: 38px !important;
     min-height: 38px !important;
@@ -505,7 +731,6 @@ label,
     line-height: 1 !important;
 }}
 
-/* ── Download button ── */
 [data-testid="stDownloadButton"] button {{
     background: linear-gradient(135deg, #e65c00, #ff8f00) !important;
     color: #fff !important;
@@ -523,19 +748,18 @@ label,
     transform: translateY(-1px) !important;
 }}
 
-/* ── Checkboxes ── */
 .stCheckbox {{
-    background: #f7f9fd;
+    background: var(--reg-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 0.6rem 0.85rem !important;
-    margin-bottom: 0.35rem !important;
-    min-height: 2.4rem !important;
+    padding: 0.55rem 0.85rem !important;
+    margin-bottom: 0.3rem !important;
+    min-height: 2.2rem !important;
     transition: background .12s;
     display: flex !important;
     align-items: flex-start !important;
 }}
-.stCheckbox:hover {{ background: var(--blue-pale); border-color: #b3c8f0; }}
+.stCheckbox:hover {{ background: var(--blue-pale); border-color: var(--blue); }}
 .stCheckbox label {{
     font-size: 0.84rem !important;
     font-weight: 500 !important;
@@ -547,7 +771,6 @@ label,
     word-break: break-word !important;
 }}
 
-/* ── Monitor block ── */
 .monitor-block {{
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -561,7 +784,7 @@ label,
     align-items: center;
     gap: 9px;
     padding: 0.65rem 0.9rem;
-    background: #f0f4fa;
+    background: var(--mon-hdr-bg);
     border-bottom: 1px solid var(--border);
 }}
 .monitor-block-icon {{
@@ -586,11 +809,10 @@ label,
     margin-top: 1px;
 }}
 
-/* ── Adapter chip panel ── */
 .adapter-chip-panel {{
     margin: 0 0.9rem 0.65rem 2.4rem;
-    background: #f7f9fd;
-    border: 1px solid #dde5f0;
+    background: var(--adapter-bg);
+    border: 1px solid var(--adapter-bdr);
     border-radius: 8px;
     overflow: hidden;
 }}
@@ -599,8 +821,8 @@ label,
     align-items: center;
     gap: 5px;
     padding: 0.32rem 0.7rem;
-    border-bottom: 1px solid #e4ebf5;
-    background: #eef2fb;
+    border-bottom: 1px solid var(--adapter-sub);
+    background: var(--adapter-hdr);
 }}
 .adapter-chip-dot {{
     width: 5px; height: 5px;
@@ -628,7 +850,7 @@ label,
     border: 1px solid var(--border);
     cursor: pointer;
     color: var(--muted);
-    background: #fff;
+    background: var(--chip-bg);
     font-family: 'DM Sans', sans-serif;
     font-weight: 500;
     transition: all 0.12s;
@@ -648,15 +870,15 @@ label,
     transition: all 0.12s;
     white-space: nowrap;
 }}
-.adapter-chip-none:hover {{ border-color: var(--muted); background: #f0f4fa; }}
+.adapter-chip-none:hover {{ border-color: var(--muted); background: var(--blue-pale); }}
 .adapter-chip.chip-selected {{
     background: var(--blue-pale); color: var(--blue); border-color: var(--blue); font-weight: 600;
 }}
 .adapter-chip-none.chip-selected {{
-    background: #f0f4fa; color: var(--muted); border-style: solid; border-color: var(--muted); font-weight: 600;
+    background: var(--chip-def-bg); color: var(--muted); border-style: solid;
+    border-color: var(--muted); font-weight: 600;
 }}
 
-/* ── Charger badge ── */
 .charger-badge {{
     display: inline-flex;
     align-items: center;
@@ -671,7 +893,6 @@ label,
     margin-bottom: 0.75rem;
 }}
 
-/* ── Sequence badge ── */
 .seq-badge {{
     display: inline-block;
     background: var(--blue-pale);
@@ -684,14 +905,13 @@ label,
     vertical-align: middle;
 }}
 
-/* ── Alerts ── */
 .stAlert {{
     border-radius: 8px !important;
     font-family: 'DM Sans', sans-serif !important;
     font-size: 0.82rem !important;
+    color: var(--text) !important;
 }}
 
-/* ── Metrics ── */
 [data-testid="stMetric"] {{
     background: var(--card);
     border: 1px solid var(--border);
@@ -722,11 +942,10 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
     font-size: 0.75rem !important;
 }}
 
-/* ── Info hint ── */
 .info-hint {{
     font-size: 0.77rem;
-    color: var(--blue);
-    background: var(--blue-pale);
+    color: var(--hint-txt);
+    background: var(--hint-bg);
     border-left: 3px solid var(--blue);
     border-radius: 0 6px 6px 0;
     padding: 0.5rem 0.7rem;
@@ -736,14 +955,16 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
 }}
 .info-hint strong {{ font-weight: 700; color: var(--navy); }}
 
-/* ── File uploader ── */
 [data-testid="stFileUploader"] section {{
     border: 2px dashed var(--border) !important;
     border-radius: var(--radius) !important;
-    background: #f7f9fd !important;
+    background: var(--reg-bg) !important;
+    color: var(--text) !important;
+}}
+[data-testid="stFileUploader"] * {{
+    color: var(--text) !important;
 }}
 
-/* ── Footer ── */
 .bmg-footer {{
     text-align: center;
     color: var(--muted);
@@ -753,15 +974,15 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
     border-top: 1px solid var(--border);
 }}
 
-/* ── Preview table ── */
 .preview-table {{
     width: 100%;
     border-collapse: collapse;
     font-size: 0.79rem;
     margin-top: 0.5rem;
+    color: var(--text);
 }}
 .preview-table th {{
-    background: var(--navy);
+    background: var(--table-hdr);
     color: #fff;
     font-weight: 600;
     padding: 0.4rem 0.65rem;
@@ -775,13 +996,12 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
     border-bottom: 1px solid var(--border);
     color: var(--text);
 }}
-.preview-table tr:nth-child(even) td {{ background: #f7f9fd; }}
+.preview-table tr:nth-child(even) td {{ background: var(--table-odd); }}
 .preview-table tr:hover td {{ background: var(--blue-pale); }}
 
-/* ── Remarks field ── */
 .remarks-wrap {{
-    background: #fffdf0;
-    border: 1.5px solid #ffe082;
+    background: var(--remark-bg);
+    border: 1.5px solid var(--remark-bdr);
     border-radius: 8px;
     padding: 0.8rem 0.95rem 0.55rem;
     margin-top: 0.3rem;
@@ -790,7 +1010,7 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
 .remarks-label {{
     font-size: 0.7rem;
     font-weight: 700;
-    color: #b07d00;
+    color: var(--remark-txt);
     text-transform: uppercase;
     letter-spacing: 0.07em;
     margin-bottom: 0.3rem;
@@ -802,12 +1022,19 @@ hr {{ border-color: var(--border) !important; margin: 0.9rem 0 !important; }}
     line-height: 1.45;
 }}
 
-/* ── User manager label spacer ── */
-.user-mgr-btn-spacer {{
-    height: 2.35rem;
-    display: block;
+[data-testid="stExpander"] {{
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+}}
+[data-testid="stExpander"] summary {{
+    color: var(--text) !important;
 }}
 
+p, span, div, li {{
+    color: var(--text);
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -831,7 +1058,7 @@ CSV_COLUMNS = {
 
 ITEM_SEQUENCE_ORDER = {
     "laptop": 1, "computer": 1, "desktop": 1,
-    "charger": 2, "monitor": 3,
+    " laptop charger": 2, "monitor": 3,
     "hdmi": 5, "keyboard": 6, "mouse": 7,
     "headset": 8, "headphone": 8, "usb": 9,
     "usb peripheral": 9, "vga": 10, "dvi": 11,
@@ -856,9 +1083,17 @@ _POSITION_KEYWORDS    = ("position", "job title", "jobtitle", "designation", "ti
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _FONT_NAME  = "Calibri"
 _FONT_SIZE  = "20"
-_TABLE_SIZE = "18"
+_TABLE_SIZE = "20"
 
 _JS_ONCLICK_REGEX = r"/'([^']+)'\s*\)$/"
+
+# Word/OOXML relationship namespaces
+_RELS_NS  = "http://schemas.openxmlformats.org/package/2006/relationships"
+_IMG_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+_WP_NS    = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+_A_NS     = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PIC_NS   = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+_R_NS     = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 # ─────────────────────────────────────────────
 # DATA HELPERS
@@ -971,7 +1206,7 @@ def sort_assets_by_sequence(
         })
 
     rows.append({
-        "equipment": "Charger", "serial": "", "asset_tag": "",
+        "equipment": " Laptop Charger", "serial": "", "asset_tag": "",
         "remarks": "", "_seq_key": 2.0, "_is_monitor": False,
     })
     rows.sort(key=lambda r: r["_seq_key"])
@@ -1084,7 +1319,8 @@ def smart_search(df: pd.DataFrame, user_col: str, query: str):
 
 _CT_DOTX = "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
 _CT_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-_ROW_HEIGHT_DXA = "220"
+
+_ROW_HEIGHT_DXA = "280"
 _CELL_PAD_TOP   = "40"
 _CELL_PAD_BTM   = "40"
 _CELL_PAD_LEFT  = "80"
@@ -1129,7 +1365,11 @@ def _patch_app_xml(data: bytes) -> bytes:
         return data
 
 
-def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True, size: str = _FONT_SIZE) -> bool:
+def _set_sdt_value(
+    body, tag_val: str, new_text: str,
+    bold: bool = False,
+    size: str = _FONT_SIZE,
+) -> bool:
     for sdt in body.iter(f"{{{W}}}sdt"):
         sdtPr = sdt.find(f"{{{W}}}sdtPr")
         if sdtPr is None:
@@ -1159,38 +1399,23 @@ def _set_sdt_value(body, tag_val: str, new_text: str, bold: bool = True, size: s
 
 
 def _fill_position_sdt(body, position: str) -> bool:
-    return _set_sdt_value(body, "Contact No.", position, bold=True, size=_FONT_SIZE)
+    return _set_sdt_value(body, "Contact No.", position, bold=False, size=_FONT_SIZE)
 
 
-def _fill_prepared_by(body, prepared_by: str) -> bool:
-    if not prepared_by:
-        return False
-    tables = list(body.iter(f"{{{W}}}tbl"))
-    if len(tables) < 3:
-        return _fill_prepared_by_fallback(body, prepared_by)
-    sig_table = tables[2]
-    rows = sig_table.findall(f"{{{W}}}tr")
-    if len(rows) < 5:
-        return _fill_prepared_by_fallback(body, prepared_by)
-    cells = rows[4].findall(f"{{{W}}}tc")
-    if len(cells) < 2:
-        return _fill_prepared_by_fallback(body, prepared_by)
-    replaced = False
-    for t_el in cells[1].iter(f"{{{W}}}t"):
-        if t_el.text and "[STAFF NAME]" in t_el.text:
-            t_el.text = t_el.text.replace("[STAFF NAME]", prepared_by)
-            replaced = True
-    return replaced
-
-
-def _fill_prepared_by_fallback(body, prepared_by: str) -> bool:
-    replaced = False
+def _patch_copy_label(body, copy_type: str):
     for t_el in body.iter(f"{{{W}}}t"):
-        if t_el.text and "[STAFF NAME]" in t_el.text:
-            t_el.text = t_el.text.replace("[STAFF NAME]", prepared_by)
-            replaced = True
-    return replaced
-
+        if t_el.text:
+            if copy_type == "employee":
+                t_el.text = t_el.text.replace("Verified By", "Received By")
+                t_el.text = t_el.text.replace("VERIFIED BY", "RECEIVED BY")
+                t_el.text = t_el.text.replace("Verified by", "Received by")
+                t_el.text = t_el.text.replace("IT Copy", "Employee Copy")
+                t_el.text = t_el.text.replace("IT COPY", "EMPLOYEE COPY")
+                t_el.text = t_el.text.replace("It Copy", "Employee Copy")
+            else:
+                t_el.text = t_el.text.replace("Verified By", "Verified By")
+                t_el.text = t_el.text.replace("Employee Copy", "IT Copy")
+                t_el.text = t_el.text.replace("EMPLOYEE COPY", "IT COPY")
 
 def _get_equipment_table(body):
     for tbl in body.iter(f"{{{W}}}tbl"):
@@ -1200,7 +1425,7 @@ def _get_equipment_table(body):
     return None
 
 
-def _set_cell_text(cell_el, text: str):
+def _set_cell_text(cell_el, text: str, top_align: bool = False):
     p_list = cell_el.findall(f"{{{W}}}p")
     p_el   = p_list[0] if p_list else etree.SubElement(cell_el, f"{{{W}}}p")
     for tag in [f"{{{W}}}r", f"{{{W}}}sdt"]:
@@ -1220,9 +1445,78 @@ def _set_cell_text(cell_el, text: str):
     r_el = etree.SubElement(p_el, f"{{{W}}}r")
     r_el.append(_make_rPr(bold=False, size=_TABLE_SIZE))
     r_el.append(_make_t(text))
+    # vertical alignment on the cell
+    tcPr = cell_el.find(f"{{{W}}}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(cell_el, f"{{{W}}}tcPr")
+        cell_el.insert(0, tcPr)
+    for va in tcPr.findall(f"{{{W}}}vAlign"):
+        tcPr.remove(va)
+    vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign")
+    vAlign.set(f"{{{W}}}val", "top" if top_align else "center")
 
 
-def _compact_row(row_el):
+def _apply_compact_cell(tc, col_idx, pad_top, pad_btm, pad_left, pad_right,
+                         font_size, remarks_col_index):
+    """Apply compact formatting to a single table cell."""
+    tcPr = tc.find(f"{{{W}}}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(tc, f"{{{W}}}tcPr")
+        tc.insert(0, tcPr)
+    noWrap = tcPr.find(f"{{{W}}}noWrap")
+    if noWrap is None:
+        etree.SubElement(tcPr, f"{{{W}}}noWrap")
+    tcMar = tcPr.find(f"{{{W}}}tcMar")
+    if tcMar is None:
+        tcMar = etree.SubElement(tcPr, f"{{{W}}}tcMar")
+    for side, val in [("top", pad_top), ("bottom", pad_btm),
+                      ("left", pad_left), ("right", pad_right)]:
+        el = tcMar.find(f"{{{W}}}{side}")
+        if el is None:
+            el = etree.SubElement(tcMar, f"{{{W}}}{side}")
+        el.set(f"{{{W}}}w", val)
+        el.set(f"{{{W}}}type", "dxa")
+    for va in tcPr.findall(f"{{{W}}}vAlign"):
+        tcPr.remove(va)
+    vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign")
+    # remarks column top-aligned, all others center
+    vAlign.set(f"{{{W}}}val", "top" if col_idx == remarks_col_index else "center")
+    for p in tc.iter(f"{{{W}}}p"):
+        pPr = p.find(f"{{{W}}}pPr")
+        if pPr is not None:
+            for spacing in pPr.findall(f"{{{W}}}spacing"):
+                pPr.remove(spacing)
+            for cs in pPr.findall(f"{{{W}}}contextualSpacing"):
+                pPr.remove(cs)
+            sp_el = etree.SubElement(pPr, f"{{{W}}}spacing")
+            sp_el.set(f"{{{W}}}before",   "0")
+            sp_el.set(f"{{{W}}}after",    "0")
+            sp_el.set(f"{{{W}}}line",     "240")
+            sp_el.set(f"{{{W}}}lineRule", "auto")
+        for r in p.findall(f"{{{W}}}r"):
+            rPr = r.find(f"{{{W}}}rPr")
+            if rPr is None:
+                rPr = etree.SubElement(r, f"{{{W}}}rPr")
+                r.insert(0, rPr)
+            for sz_tag in (f"{{{W}}}sz", f"{{{W}}}szCs"):
+                sz_el = rPr.find(sz_tag)
+                if sz_el is None:
+                    sz_el = etree.SubElement(rPr, sz_tag)
+                sz_el.set(f"{{{W}}}val", font_size)
+            for spacing in rPr.findall(f"{{{W}}}spacing"):
+                rPr.remove(spacing)
+
+
+def _compact_row(
+    row_el,
+    row_height: str       = _ROW_HEIGHT_DXA,
+    pad_top:    str       = _CELL_PAD_TOP,
+    pad_btm:    str       = _CELL_PAD_BTM,
+    pad_left:   str       = _CELL_PAD_LEFT,
+    pad_right:  str       = _CELL_PAD_RIGHT,
+    font_size:  str       = _TABLE_SIZE,
+    remarks_col_index: int = 4,
+):
     trPr = row_el.find(f"{{{W}}}trPr")
     if trPr is None:
         trPr = etree.SubElement(row_el, f"{{{W}}}trPr")
@@ -1230,47 +1524,42 @@ def _compact_row(row_el):
     for trH in trPr.findall(f"{{{W}}}trHeight"):
         trPr.remove(trH)
     trH = etree.SubElement(trPr, f"{{{W}}}trHeight")
-    trH.set(f"{{{W}}}val", _ROW_HEIGHT_DXA)
-    trH.set(f"{{{W}}}hRule", "atLeast")
-    for tc in row_el.iter(f"{{{W}}}tc"):
-        tcPr = tc.find(f"{{{W}}}tcPr")
-        if tcPr is None:
-            tcPr = etree.SubElement(tc, f"{{{W}}}tcPr")
-            tc.insert(0, tcPr)
-        tcMar = tcPr.find(f"{{{W}}}tcMar")
-        if tcMar is None:
-            tcMar = etree.SubElement(tcPr, f"{{{W}}}tcMar")
-        for side, val in [("top", _CELL_PAD_TOP), ("bottom", _CELL_PAD_BTM),
-                          ("left", _CELL_PAD_LEFT), ("right", _CELL_PAD_RIGHT)]:
-            el = tcMar.find(f"{{{W}}}{side}")
-            if el is None:
-                el = etree.SubElement(tcMar, f"{{{W}}}{side}")
-            el.set(f"{{{W}}}w", val); el.set(f"{{{W}}}type", "dxa")
-        for va in tcPr.findall(f"{{{W}}}vAlign"):
-            tcPr.remove(va)
-        vAlign = etree.SubElement(tcPr, f"{{{W}}}vAlign"); vAlign.set(f"{{{W}}}val", "center")
-        for p in tc.iter(f"{{{W}}}p"):
-            pPr = p.find(f"{{{W}}}pPr")
-            if pPr is not None:
-                for spacing in pPr.findall(f"{{{W}}}spacing"):
-                    pPr.remove(spacing)
-                for cs in pPr.findall(f"{{{W}}}contextualSpacing"):
-                    pPr.remove(cs)
-            for r in p.findall(f"{{{W}}}r"):
-                rPr = r.find(f"{{{W}}}rPr")
-                if rPr is not None:
-                    for spacing in rPr.findall(f"{{{W}}}spacing"):
-                        rPr.remove(spacing)
+    trH.set(f"{{{W}}}val",   row_height)
+    trH.set(f"{{{W}}}hRule", "exact")
+
+    # Walk direct children only — same traversal as _fill_equipment_row
+    col_idx = 0
+    for ch in row_el:
+        if ch.tag == f"{{{W}}}tc":
+            _apply_compact_cell(ch, col_idx, pad_top, pad_btm, pad_left, pad_right,
+                                font_size, remarks_col_index)
+            col_idx += 1
+        elif ch.tag == f"{{{W}}}sdt":
+            sc = ch.find(f"{{{W}}}sdtContent")
+            if sc is None:
+                continue
+            for tc in sc.findall(f"{{{W}}}tc"):
+                _apply_compact_cell(tc, col_idx, pad_top, pad_btm, pad_left, pad_right,
+                                    font_size, remarks_col_index)
+                col_idx += 1
 
 
-def _compact_page_margins(body):
+def _compact_page_margins(body, num_rows: int = 0):
     sectPr = body.find(f"{{{W}}}sectPr")
     if sectPr is None:
         return
     pgMar = sectPr.find(f"{{{W}}}pgMar")
     if pgMar is None:
         pgMar = etree.SubElement(sectPr, f"{{{W}}}pgMar")
-    for side, max_val in [("top", 720), ("bottom", 720), ("left", 720), ("right", 720)]:
+    if num_rows > 15:
+        v_margin = 320
+    elif num_rows > 10:
+        v_margin = 460
+    else:
+        v_margin = 640
+    h_margin = 540
+    for side, max_val in [("top", v_margin), ("bottom", v_margin),
+                          ("left", h_margin), ("right", h_margin)]:
         current = pgMar.get(f"{{{W}}}{side}")
         try:
             if current is None or int(current) > max_val:
@@ -1338,11 +1627,408 @@ def _fill_equipment_row(row_el, equipment, serial, asset_tag, remarks):
             if sc is not None:
                 for tc in sc.findall(f"{{{W}}}tc"):
                     cells.append(tc)
-    for i, (cell, text) in enumerate(zip(cells, ["", equipment, serial, asset_tag, remarks])):
+
+    # Replace blank values with "-"
+    equipment = equipment.strip() if equipment and equipment.strip() else "-"
+    serial    = serial.strip()    if serial    and serial.strip()    else "-"
+    asset_tag = asset_tag.strip() if asset_tag and asset_tag.strip() else "-"
+
+    for i, (cell, text, top) in enumerate(zip(
+        cells,
+        ["", equipment, serial, asset_tag, remarks],
+        [False, False,  False,  False,     True],
+    )):
         if i == 0:
             continue
-        _set_cell_text(cell, text)
+        _set_cell_text(cell, text, top_align=top)
 
+
+# ─────────────────────────────────────────────
+# SIGNATURE IMAGE — WORD EMBEDDING
+# ─────────────────────────────────────────────
+
+def _get_png_dimensions(data: bytes) -> tuple[int, int]:
+    """Read width, height from a PNG header. Returns (w, h) in pixels."""
+    try:
+        if data[:8] == b'\x89PNG\r\n\x1a\n':
+            w, h = struct.unpack('>II', data[16:24])
+            return w, h
+    except Exception:
+        pass
+    return 300, 80   # safe fallback
+
+
+def _get_jpeg_dimensions(data: bytes) -> tuple[int, int]:
+    """Read width, height from a JPEG. Returns (w, h) in pixels."""
+    try:
+        i = 2
+        while i < len(data):
+            marker = data[i:i+2]
+            i += 2
+            if marker in (b'\xff\xc0', b'\xff\xc1', b'\xff\xc2'):
+                h, w = struct.unpack('>HH', data[i+3:i+7])
+                return w, h
+            length = struct.unpack('>H', data[i:i+2])[0]
+            i += length
+    except Exception:
+        pass
+    return 300, 80
+
+
+def _add_image_to_zip(files: dict, image_bytes: bytes, ext: str) -> str:
+    """
+    Register the signature image in the zip and its relationship.
+    Returns the relationship ID string (e.g. 'rId901').
+    """
+    rId            = "rId901"
+    media_path     = f"word/media/sig_prepared_by{ext}"
+    rels_path      = "word/_rels/document.xml.rels"
+
+    # Save image bytes into the zip dict
+    files[media_path] = image_bytes
+
+    # Parse existing rels, add new one
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+    rel_xml = files.get(rels_path, b'')
+    try:
+        rels_root = etree.fromstring(rel_xml)
+    except Exception:
+        rels_root = etree.Element(f"{{{_RELS_NS}}}Relationships")
+
+    # Remove any stale sig rel from a previous generation
+    for old in rels_root.findall(f"{{{_RELS_NS}}}Relationship[@Id='{rId}']"):
+        rels_root.remove(old)
+
+    rel_el = etree.SubElement(rels_root, f"{{{_RELS_NS}}}Relationship")
+    rel_el.set("Id",         rId)
+    rel_el.set("Type",       _IMG_TYPE)
+    rel_el.set("Target",     f"media/sig_prepared_by{ext}")
+
+    files[rels_path] = etree.tostring(
+        rels_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    return rId
+
+
+def _make_inline_image_run(rId: str, img_w_px: int, img_h_px: int,
+                            max_w_emu: int = 1_200_000) -> etree._Element:
+    """
+    Build a <w:r> containing an inline drawing for the signature image.
+    Sizes the image proportionally, capped at max_w_emu (default ~3.2 cm).
+    EMU = English Metric Units; 1 px at 96dpi ≈ 9525 EMU.
+    """
+    PX_TO_EMU = 9525
+    w_emu = img_w_px * PX_TO_EMU
+    h_emu = img_h_px * PX_TO_EMU
+
+    if w_emu > max_w_emu:
+        scale = max_w_emu / w_emu
+        w_emu = int(w_emu * scale)
+        h_emu = int(h_emu * scale)
+
+    r = etree.Element(f"{{{W}}}r")
+
+    drawing = etree.SubElement(r, f"{{{W}}}drawing")
+    inline  = etree.SubElement(drawing, f"{{{_WP_NS}}}inline")
+    inline.set("distT", "0"); inline.set("distB", "0")
+    inline.set("distL", "0"); inline.set("distR", "0")
+
+    extent = etree.SubElement(inline, f"{{{_WP_NS}}}extent")
+    extent.set("cx", str(w_emu))
+    extent.set("cy", str(h_emu))
+
+    effectExtent = etree.SubElement(inline, f"{{{_WP_NS}}}effectExtent")
+    effectExtent.set("l", "0"); effectExtent.set("t", "0")
+    effectExtent.set("r", "0"); effectExtent.set("b", "0")
+
+    docPr = etree.SubElement(inline, f"{{{_WP_NS}}}docPr")
+    docPr.set("id", "901"); docPr.set("name", "SignatureImage")
+
+    cNvGraphicFramePr = etree.SubElement(inline, f"{{{_WP_NS}}}cNvGraphicFramePr")
+    graphicFrameLocks = etree.SubElement(
+        cNvGraphicFramePr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicFrameLocks"
+    )
+    graphicFrameLocks.set("noChangeAspect", "1")
+
+    graphic = etree.SubElement(
+        inline, "{http://schemas.openxmlformats.org/drawingml/2006/main}graphic")
+    graphicData = etree.SubElement(graphic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData")
+    graphicData.set(
+        "uri", "http://schemas.openxmlformats.org/drawingml/2006/picture")
+
+    pic = etree.SubElement(graphicData,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic")
+
+    nvPicPr = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}nvPicPr")
+    cNvPr = etree.SubElement(nvPicPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}cNvPr")
+    cNvPr.set("id", "0"); cNvPr.set("name", "SignatureImage")
+    cNvPicPr = etree.SubElement(nvPicPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}cNvPicPr")
+
+    blipFill = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill")
+    blip = etree.SubElement(blipFill,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}blip")
+    blip.set(f"{{{_R_NS}}}embed", rId)
+
+    stretch = etree.SubElement(blipFill,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}stretch")
+    etree.SubElement(stretch,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}fillRect")
+
+    spPr = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}spPr")
+    xfrm = etree.SubElement(spPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm")
+    off = etree.SubElement(xfrm,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}off")
+    off.set("x", "0"); off.set("y", "0")
+    ext2 = etree.SubElement(xfrm,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}ext")
+    ext2.set("cx", str(w_emu)); ext2.set("cy", str(h_emu))
+    prstGeom = etree.SubElement(spPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}prstGeom")
+    prstGeom.set("prst", "rect")
+    etree.SubElement(prstGeom,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}avLst")
+
+    return r
+
+
+def _insert_signature_into_cell(cell_el, rId: str, img_bytes: bytes, ext: str):
+    """
+    Insert the signature image as a floating image (wrap in front of text),
+    positioned to the right side of the signature cell.
+    """
+    if ext == ".png":
+        w_px, h_px = _get_png_dimensions(img_bytes)
+    else:
+        w_px, h_px = _get_jpeg_dimensions(img_bytes)
+
+    PX_TO_EMU = 9525
+    max_w_emu = 2_000_000
+    w_emu = w_px * PX_TO_EMU
+    h_emu = h_px * PX_TO_EMU
+
+    if w_emu > max_w_emu:
+        scale = max_w_emu / w_emu
+        w_emu = int(w_emu * scale)
+        h_emu = int(h_emu * scale)
+
+    # Horizontal offset from left edge of cell — push image to the right
+    pos_x_emu = 600_000   # increase this value to move further right
+    pos_y_emu = -150_000
+
+    r = etree.Element(f"{{{W}}}r")
+    drawing = etree.SubElement(r, f"{{{W}}}drawing")
+
+    anchor = etree.SubElement(drawing, f"{{{_WP_NS}}}anchor")
+    anchor.set("distT", "0")
+    anchor.set("distB", "0")
+    anchor.set("distL", "0")
+    anchor.set("distR", "0")
+    anchor.set("simplePos", "0")
+    anchor.set("relativeHeight", "251658240")
+    anchor.set("behindDoc", "0")      # 0 = in front of text
+    anchor.set("locked", "0")
+    anchor.set("layoutInCell", "1")
+    anchor.set("allowOverlap", "1")
+
+    simplePos = etree.SubElement(anchor, f"{{{_WP_NS}}}simplePos")
+    simplePos.set("x", "0")
+    simplePos.set("y", "0")
+
+    posH = etree.SubElement(anchor, f"{{{_WP_NS}}}positionH")
+    posH.set("relativeFrom", "column")
+    posOffset_h = etree.SubElement(posH, f"{{{_WP_NS}}}posOffset")
+    posOffset_h.text = str(pos_x_emu)
+
+    posV = etree.SubElement(anchor, f"{{{_WP_NS}}}positionV")
+    posV.set("relativeFrom", "paragraph")
+    posOffset_v = etree.SubElement(posV, f"{{{_WP_NS}}}posOffset")
+    posOffset_v.text = str(pos_y_emu)
+
+    extent = etree.SubElement(anchor, f"{{{_WP_NS}}}extent")
+    extent.set("cx", str(w_emu))
+    extent.set("cy", str(h_emu))
+
+    effectExtent = etree.SubElement(anchor, f"{{{_WP_NS}}}effectExtent")
+    effectExtent.set("l", "0")
+    effectExtent.set("t", "0")
+    effectExtent.set("r", "0")
+    effectExtent.set("b", "0")
+
+    wrapNone = etree.SubElement(anchor, f"{{{_WP_NS}}}wrapNone")
+
+    docPr = etree.SubElement(anchor, f"{{{_WP_NS}}}docPr")
+    docPr.set("id", "901")
+    docPr.set("name", "SignatureImage")
+
+    cNvGraphicFramePr = etree.SubElement(anchor, f"{{{_WP_NS}}}cNvGraphicFramePr")
+    graphicFrameLocks = etree.SubElement(
+        cNvGraphicFramePr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicFrameLocks"
+    )
+    graphicFrameLocks.set("noChangeAspect", "1")
+
+    graphic = etree.SubElement(
+        anchor, "{http://schemas.openxmlformats.org/drawingml/2006/main}graphic")
+    graphicData = etree.SubElement(graphic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData")
+    graphicData.set("uri", "http://schemas.openxmlformats.org/drawingml/2006/picture")
+
+    pic = etree.SubElement(graphicData,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic")
+
+    nvPicPr = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}nvPicPr")
+    cNvPr = etree.SubElement(nvPicPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}cNvPr")
+    cNvPr.set("id", "0")
+    cNvPr.set("name", "SignatureImage")
+    etree.SubElement(nvPicPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}cNvPicPr")
+
+    blipFill = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill")
+    blip = etree.SubElement(blipFill,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}blip")
+    blip.set(f"{{{_R_NS}}}embed", rId)
+
+    stretch = etree.SubElement(blipFill,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}stretch")
+    etree.SubElement(stretch,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}fillRect")
+
+    spPr = etree.SubElement(pic,
+        "{http://schemas.openxmlformats.org/drawingml/2006/picture}spPr")
+    xfrm = etree.SubElement(spPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm")
+    off = etree.SubElement(xfrm,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}off")
+    off.set("x", "0")
+    off.set("y", "0")
+    ext2 = etree.SubElement(xfrm,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}ext")
+    ext2.set("cx", str(w_emu))
+    ext2.set("cy", str(h_emu))
+    prstGeom = etree.SubElement(spPr,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}prstGeom")
+    prstGeom.set("prst", "rect")
+    etree.SubElement(prstGeom,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}avLst")
+
+    # Insert the floating image run into the first paragraph of the cell
+    first_p = cell_el.find(f"{{{W}}}p")
+    if first_p is not None:
+        first_p.append(r)
+    else:
+        p = etree.SubElement(cell_el, f"{{{W}}}p")
+        p.append(r)
+
+
+def _fill_prepared_by(body, prepared_by: str, files: dict | None = None) -> bool:
+    """
+    Fill the [STAFF NAME] placeholder in the signature table.
+    If `files` is provided and a signature image exists, embeds it above the name.
+    """
+    if not prepared_by:
+        return False
+
+    sig_path  = _find_signature_image(prepared_by)
+    rId       = None
+    img_bytes = None
+    img_ext   = None
+
+    if sig_path and files is not None:
+        try:
+            img_bytes = sig_path.read_bytes()
+            img_ext   = sig_path.suffix.lower()
+            rId       = _add_image_to_zip(files, img_bytes, img_ext)
+        except Exception:
+            rId = None
+
+    # Find the signature cell (3rd table, 5th row, 2nd cell)
+    tables = list(body.iter(f"{{{W}}}tbl"))
+    sig_cell = None
+    if len(tables) >= 3:
+        sig_table = tables[2]
+        rows = sig_table.findall(f"{{{W}}}tr")
+        if len(rows) >= 5:
+            cells = rows[4].findall(f"{{{W}}}tc")
+            if len(cells) >= 2:
+                sig_cell = cells[1]
+
+    if sig_cell is None:
+        return _fill_prepared_by_fallback(body, prepared_by)
+
+    # Replace [STAFF NAME] text
+    replaced = False
+    for t_el in sig_cell.iter(f"{{{W}}}t"):
+        if t_el.text and "[STAFF NAME]" in t_el.text:
+            t_el.text = t_el.text.replace("[STAFF NAME]", prepared_by)
+            replaced = True
+
+    # If we have a signature image, embed it before the text
+    if rId and img_bytes and img_ext:
+        _insert_signature_into_cell(sig_cell, rId, img_bytes, img_ext)
+
+    return replaced
+
+
+def _fill_prepared_by_fallback(body, prepared_by: str) -> bool:
+    replaced = False
+    for t_el in body.iter(f"{{{W}}}t"):
+        if t_el.text and "[STAFF NAME]" in t_el.text:
+            t_el.text = t_el.text.replace("[STAFF NAME]", prepared_by)
+            replaced = True
+    return replaced
+def _apply_remarks_rowspan(eq_table, num_data_rows: int):
+    """
+    Merges the remarks cell (col index 4) across all data rows
+    so it appears as one unified cell instead of being split by row borders.
+    """
+    all_rows = eq_table.findall(f"{{{W}}}tr")
+    data_rows = all_rows[1:]  # skip header row
+
+    for row_i, row_el in enumerate(data_rows[:num_data_rows]):
+        cells = []
+        for ch in row_el:
+            if ch.tag == f"{{{W}}}tc":
+                cells.append(ch)
+            elif ch.tag == f"{{{W}}}sdt":
+                sc = ch.find(f"{{{W}}}sdtContent")
+                if sc is not None:
+                    for tc in sc.findall(f"{{{W}}}tc"):
+                        cells.append(tc)
+
+        if len(cells) < 5:
+            continue
+
+        remarks_cell = cells[4]
+        tcPr = remarks_cell.find(f"{{{W}}}tcPr")
+        if tcPr is None:
+            tcPr = etree.SubElement(remarks_cell, f"{{{W}}}tcPr")
+            remarks_cell.insert(0, tcPr)
+
+        # Remove any existing vMerge
+        for vm in tcPr.findall(f"{{{W}}}vMerge"):
+            tcPr.remove(vm)
+
+        vMerge = etree.SubElement(tcPr, f"{{{W}}}vMerge")
+
+        if row_i == 0:
+            # First data row: start the merge + write the remarks text
+            vMerge.set(f"{{{W}}}val", "restart")
+        else:
+            # All subsequent rows: continuation cell must be empty
+            for p in remarks_cell.findall(f"{{{W}}}p"):
+                remarks_cell.remove(p)
+            empty_p = etree.SubElement(remarks_cell, f"{{{W}}}p")
+            etree.SubElement(empty_p, f"{{{W}}}pPr")
 
 def fill_template(
     sorted_rows: list[dict],
@@ -1352,6 +2038,7 @@ def fill_template(
     date_str: str,
     prepared_by: str = "",
     form_type: str = "wfh",
+    copy_type: str = "it",
 ) -> bytes:
     template_filename = WFH_TEMPLATE_NAME if form_type == "wfh" else ONSITE_TEMPLATE_NAME
     tpl = _find_template(template_filename)
@@ -1364,19 +2051,62 @@ def fill_template(
         files = {n: zin.read(n) for n in zin.namelist()}
     if "[Content_Types].xml" in files:
         files["[Content_Types].xml"] = _patch_content_types(files["[Content_Types].xml"])
+        # Also register the image content type if not already present
+        ct_root = etree.fromstring(files["[Content_Types].xml"])
+        ct_ns   = "http://schemas.openxmlformats.org/package/2006/content-types"
+        existing_exts = {
+            el.get("Extension", "")
+            for el in ct_root.findall(f"{{{ct_ns}}}Default")
+        }
+        for ext_str, mime_str in [("png", "image/png"), ("jpeg", "image/jpeg"), ("jpg", "image/jpeg")]:
+            if ext_str not in existing_exts:
+                def_el = etree.SubElement(ct_root, f"{{{ct_ns}}}Default")
+                def_el.set("Extension",   ext_str)
+                def_el.set("ContentType", mime_str)
+        files["[Content_Types].xml"] = etree.tostring(
+            ct_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
     if "docProps/app.xml" in files:
         files["docProps/app.xml"] = _patch_app_xml(files["docProps/app.xml"])
+
     root = etree.fromstring(files["word/document.xml"])
     body = root.find(f"{{{W}}}body")
 
-    _set_sdt_value(body, "Name",   employee_name, bold=True, size=_FONT_SIZE)
-    _set_sdt_value(body, "Client", client,        bold=True, size=_FONT_SIZE)
-    _set_sdt_value(body, "Date",   date_str,      bold=True, size=_FONT_SIZE)
+    _set_sdt_value(body, "Name",   employee_name, bold=False, size=_FONT_SIZE)
+    _set_sdt_value(body, "Client", client,        bold=False, size=_FONT_SIZE)
+    _set_sdt_value(body, "Date",   date_str,      bold=False, size=_FONT_SIZE)
     _fill_position_sdt(body, position)
     _shrink_header_sdt_cells(body)
-    _compact_page_margins(body)
+    _patch_copy_label(body, copy_type)
+
+    num_rows = len(sorted_rows)
+
+    if num_rows <= 10:
+        row_h     = "280"
+        pad_v     = "40"
+        pad_h     = "80"
+        font_size = "20"
+    elif num_rows <= 14:
+        row_h     = "240"
+        pad_v     = "30"
+        pad_h     = "70"
+        font_size = "18"
+    elif num_rows <= 18:
+        row_h     = "200"
+        pad_v     = "20"
+        pad_h     = "60"
+        font_size = "16"
+    else:
+        row_h     = "180"
+        pad_v     = "12"
+        pad_h     = "50"
+        font_size = "15"
+
+    _compact_page_margins(body, num_rows=num_rows)
+
+    # Pass `files` so signature image can be embedded into the zip
     if prepared_by:
-        _fill_prepared_by(body, prepared_by)
+        _fill_prepared_by(body, prepared_by, files=files)
 
     eq_table = _get_equipment_table(body)
     if eq_table is not None:
@@ -1384,26 +2114,40 @@ def fill_template(
         data_rows    = all_rows[1:]
         template_row = copy.deepcopy(data_rows[0]) if data_rows else None
         num_assets   = len(sorted_rows)
+
+        geo = dict(
+            row_height = row_h,
+            pad_top    = pad_v,
+            pad_btm    = pad_v,
+            pad_left   = pad_h,
+            pad_right  = pad_h,
+            font_size  = font_size,
+        )
+
         for i, asset in enumerate(sorted_rows):
             if i < len(data_rows):
                 row_el = data_rows[i]
-                _compact_row(row_el)
+                _compact_row(row_el, **geo)
                 _fill_equipment_row(row_el, asset["equipment"], asset["serial"],
                                     asset["asset_tag"], asset["remarks"])
             elif template_row is not None:
                 new_row = copy.deepcopy(template_row)
-                _compact_row(new_row)
+                _compact_row(new_row, **geo)
                 eq_table.append(new_row)
                 _fill_equipment_row(new_row, asset["equipment"], asset["serial"],
                                     asset["asset_tag"], asset["remarks"])
+
         all_rows_now = eq_table.findall(f"{{{W}}}tr")
         for extra_row in all_rows_now[1 + num_assets:]:
             eq_table.remove(extra_row)
+        _apply_remarks_rowspan(eq_table, num_assets)
+
         for data_row in eq_table.findall(f"{{{W}}}tr")[1:]:
-            _compact_row(data_row)
+            _compact_row(data_row, **geo)
 
     files["word/document.xml"] = etree.tostring(
         root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
         for name, data in files.items():
@@ -1445,9 +2189,50 @@ def step_close():
 def _safe_periph_key(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
 
-# ─────────────────────────────────────────────
-# PREPARED-BY USER MANAGEMENT UI
-# ─────────────────────────────────────────────
+
+def render_copy_type_selector() -> str:
+    if "copy_type" not in st.session_state:
+        st.session_state["copy_type"] = "it"
+    current = st.session_state["copy_type"]
+
+    st.markdown("""
+    <div class="copy-type-card">
+      <div class="copy-type-label">📋 Copy Type</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_it, col_emp = st.columns(2)
+    with col_it:
+        it_css = "it-active" if current == "it" else "it-inactive"
+        st.markdown(f'<div class="copy-toggle-btn {it_css}">', unsafe_allow_html=True)
+        if st.button("🖥️  IT Copy", key="btn_copy_it", use_container_width=True):
+            if current != "it":
+                st.session_state["copy_type"] = "it"
+                st.session_state.pop("docx", None)
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_emp:
+        emp_css = "emp-active" if current == "employee" else "emp-inactive"
+        st.markdown(f'<div class="copy-toggle-btn {emp_css}">', unsafe_allow_html=True)
+        if st.button("👤  Employee Copy", key="btn_copy_emp", use_container_width=True):
+            if current != "employee":
+                st.session_state["copy_type"] = "employee"
+                st.session_state.pop("docx", None)
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    if current == "employee":
+        st.markdown(
+            '<div style="font-size:0.74rem;color:var(--orange);background:#fff3e0;'
+            'border-left:3px solid #e65c00;border-radius:0 6px 6px 0;'
+            'padding:0.38rem 0.7rem;margin-top:0.4rem;">'
+            '⚠️ "Verified By" will be changed to "Received By" in the document.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    return current
+
 
 def render_prepared_by_section() -> str:
     st.markdown("""
@@ -1475,6 +2260,24 @@ def render_prepared_by_section() -> str:
             st.session_state["show_user_mgr"] = not st.session_state["show_user_mgr"]
             st.rerun()
 
+    # Show signature status badge
+    if prepared_by:
+        sig_path = _find_signature_image(prepared_by)
+        if sig_path:
+            st.markdown(
+                f'<div class="sig-preview-badge">'
+                f'✅ Signature image found — will be embedded in document'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="sig-missing-badge">'
+                f'○ No signature image — add <code>src/signatures/{prepared_by}.png</code> to enable'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
     if st.session_state.get("show_user_mgr"):
         _render_user_manager(options)
 
@@ -1496,7 +2299,7 @@ def _render_user_manager(options: list[str]):
         chips_html += f'<span class="{chip_cls}">{u}{lock_icon}</span>'
     st.markdown(
         f'<div style="margin-bottom:0.55rem">'
-        f'<div style="font-size:0.7rem;font-weight:700;color:#5a6e8a;text-transform:uppercase;'
+        f'<div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;'
         f'letter-spacing:.06em;margin-bottom:6px;">Current staff</div>'
         f'<div class="user-chip-wrap">{chips_html}</div>'
         f'</div>',
@@ -1504,7 +2307,6 @@ def _render_user_manager(options: list[str]):
     )
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Add New Staff ─────────────────────────────────────────────────────────
     add_col, add_btn_col = st.columns([3, 1])
     with add_col:
         new_name = st.text_input(
@@ -1525,7 +2327,6 @@ def _render_user_manager(options: list[str]):
                 st.error(msg)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Remove Staff ──────────────────────────────────────────────────────────
     removable = [u for u in options if u not in DEFAULT_PREPARED_BY]
     if removable:
         st.markdown("<hr>", unsafe_allow_html=True)
@@ -1549,11 +2350,40 @@ def _render_user_manager(options: list[str]):
     else:
         st.caption("Only default staff shown — add a custom name above to enable removal.")
 
+
 # ─────────────────────────────────────────────
 # CSV UPLOAD UI
 # ─────────────────────────────────────────────
 
+_DOWNSTREAM_KEYS = (
+    "df_loaded", "csv_file_id",
+    "docx", "form_name", "form_client", "form_date",
+    "prepared_by", "form_type_used", "copy_type_used",
+    "shared_remarks",
+)
+
+
+def _clear_downstream():
+    for k in list(st.session_state.keys()):
+        if k.startswith("sel_") or k.startswith("chk_"):
+            del st.session_state[k]
+    for k in _DOWNSTREAM_KEYS:
+        st.session_state.pop(k, None)
+
+
+DEFAULT_CSV_PATH = Path(__file__).resolve().parent / "src" / "assets.csv"
+
 def render_csv_upload() -> tuple[pd.DataFrame | None, str]:
+    # Try to load the default CSV if no file has been uploaded yet
+    default_df = None
+    default_label = ""
+    if DEFAULT_CSV_PATH.exists():
+        try:
+            default_df = pd.read_csv(DEFAULT_CSV_PATH, encoding="utf-8-sig")
+            default_label = f"{DEFAULT_CSV_PATH.name} · {len(default_df):,} rows (default)"
+        except Exception:
+            default_df = None
+
     uploaded = st.file_uploader(
         "Upload asset list",
         type=["csv", "xlsx", "xls"],
@@ -1562,6 +2392,26 @@ def render_csv_upload() -> tuple[pd.DataFrame | None, str]:
     )
 
     if uploaded is None:
+        # No file uploaded — use default if available
+        if st.session_state.get("csv_file_id") not in (None, "__default__"):
+            _clear_downstream()
+
+        if default_df is not None:
+            if st.session_state.get("csv_file_id") != "__default__":
+                _clear_downstream()
+                st.session_state["csv_file_id"] = "__default__"
+                st.session_state["df_loaded"] = default_df
+
+            st.markdown(
+                f'<div class="csv-source-bar">📂&nbsp; <span>{default_label}</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("Using default asset list — upload a file above to replace it.")
+            return st.session_state["df_loaded"], default_label
+
+        # No default either
+        if st.session_state.get("csv_file_id") is not None:
+            _clear_downstream()
         st.markdown(
             '<div class="info-hint">'
             '<strong>Tip:</strong> Export your asset list from SharePoint or Excel as a '
@@ -1571,22 +2421,37 @@ def render_csv_upload() -> tuple[pd.DataFrame | None, str]:
         )
         return None, ""
 
+    # A file was uploaded — treat it normally
+    file_id = f"{uploaded.name}::{uploaded.size}"
+
+    if st.session_state.get("csv_file_id") != file_id:
+        _clear_downstream()
+        st.session_state["csv_file_id"] = file_id
+
+    if "df_loaded" in st.session_state:
+        df    = st.session_state["df_loaded"]
+        label = f"{uploaded.name} · {len(df):,} rows"
+        st.markdown(
+            f'<div class="csv-source-bar">✅&nbsp; <span>{label}</span></div>',
+            unsafe_allow_html=True,
+        )
+        return df, label
+
     try:
         if uploaded.name.lower().endswith((".xlsx", ".xls")):
             df = pd.read_excel(uploaded)
-            label = f"{uploaded.name} · {len(df):,} rows"
         else:
             raw = uploaded.read()
+            df  = None
             for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
                 try:
                     df = pd.read_csv(io.BytesIO(raw), encoding=enc)
                     break
                 except UnicodeDecodeError:
                     continue
-            else:
+            if df is None:
                 st.error("Could not decode the CSV file. Try saving it as UTF-8.")
                 return None, ""
-            label = f"{uploaded.name} · {len(df):,} rows"
     except Exception as e:
         st.error(f"Failed to read file: {e}")
         return None, ""
@@ -1595,11 +2460,14 @@ def render_csv_upload() -> tuple[pd.DataFrame | None, str]:
         st.warning("The uploaded file appears to be empty.")
         return None, ""
 
+    st.session_state["df_loaded"] = df
+    label = f"{uploaded.name} · {len(df):,} rows"
     st.markdown(
         f'<div class="csv-source-bar">✅&nbsp; <span>{label}</span></div>',
         unsafe_allow_html=True,
     )
     return df, label
+
 
 # ─────────────────────────────────────────────
 # FORM TYPE SELECTOR
@@ -1642,6 +2510,7 @@ def render_form_type_selector() -> str:
 
     return st.session_state["form_type"]
 
+
 # ─────────────────────────────────────────────
 # MONITOR CABLE + ADAPTER RENDERER
 # ─────────────────────────────────────────────
@@ -1663,9 +2532,9 @@ def render_monitor_cable_block(mon_idx: int, mon_label: str) -> list[dict]:
 
     with st.container():
         st.markdown(
-            '<div style="margin-top:-0.6rem;border:1px solid #d0dce8;'
+            '<div style="margin-top:-0.6rem;border:1px solid var(--border);'
             'border-top:none;border-radius:0 0 12px 12px;'
-            'background:#ffffff;overflow:hidden;margin-bottom:0.85rem;">',
+            'background:var(--card);overflow:hidden;margin-bottom:0.85rem;">',
             unsafe_allow_html=True,
         )
 
@@ -1674,7 +2543,7 @@ def render_monitor_cable_block(mon_idx: int, mon_label: str) -> list[dict]:
             if ckey not in st.session_state:
                 st.session_state[ckey] = False
 
-            st.markdown('<div style="border-bottom:1px solid #edf1f7;">', unsafe_allow_html=True)
+            st.markdown('<div style="border-bottom:1px solid var(--border);">', unsafe_allow_html=True)
             is_checked = st.checkbox(cable_name, key=ckey)
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1754,16 +2623,24 @@ def render_monitor_cable_block(mon_idx: int, mon_label: str) -> list[dict]:
 
     return assignments
 
+
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
 
 def main():
+    if "csv_file_id" not in st.session_state and DEFAULT_CSV_PATH.exists():
+        try:
+            df = pd.read_csv(DEFAULT_CSV_PATH, encoding="utf-8-sig")
+            st.session_state["csv_file_id"] = "__default__"
+            st.session_state["df_loaded"] = df
+        except Exception:
+            pass
+
     render_header()
 
-    # ── Form Type ─────────────────────────────────────────────────────────────
     st.markdown(
-        '<div style="font-size:0.7rem;font-weight:700;color:#5a6e8a;'
+        '<div style="font-size:0.7rem;font-weight:700;color:var(--muted);'
         'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.3rem;">'
         'Form Type</div>',
         unsafe_allow_html=True,
@@ -1773,13 +2650,13 @@ def main():
     if form_type == "wfh":
         tpl_path   = _find_template(WFH_TEMPLATE_NAME)
         type_label = "Work From Home"
-        type_color = "#1565c0"
-        type_bg    = "#e8f0fc"
+        type_color_light = "#1565c0"
+        type_bg_light    = "#e8f0fc"
     else:
         tpl_path   = _find_template(ONSITE_TEMPLATE_NAME)
         type_label = "Work On Site"
-        type_color = "#00796b"
-        type_bg    = "#e0f2f1"
+        type_color_light = "#00796b"
+        type_bg_light    = "#e0f2f1"
 
     if tpl_path is None:
         st.error(
@@ -1788,21 +2665,23 @@ def main():
         )
     else:
         st.markdown(
-            f'<div style="font-size:0.75rem;color:{type_color};background:{type_bg};'
-            f'border-left:3px solid {type_color};border-radius:0 6px 6px 0;'
+            f'<div style="font-size:0.75rem;'
+            f'color:{type_color_light};background:{type_bg_light};'
+            f'border-left:3px solid {type_color_light};border-radius:0 6px 6px 0;'
             f'padding:0.38rem 0.7rem;margin:0.5rem 0 0.8rem;">'
             f'Using template: <strong>{type_label}</strong>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
+    st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
+    copy_type = render_copy_type_selector()
+
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Prepared By ───────────────────────────────────────────────────────────
     prepared_by = render_prepared_by_section()
     st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
 
-    # ── Step 1: Upload CSV ────────────────────────────────────────────────────
     step_open(1, "Upload Asset List",
               "Upload a CSV or Excel file exported from SharePoint or your asset tracker.")
     df, csv_label = render_csv_upload()
@@ -1832,7 +2711,6 @@ def main():
     else:
         st.caption(f"{len(df):,} records · No position column detected")
 
-    # ── Step 2: Search ────────────────────────────────────────────────────────
     step_open(2, "Find Employee",
               "Type any part of a name — partial words and any order are supported.")
     search = st.text_input(
@@ -1886,30 +2764,29 @@ def main():
     else:
         st.success(f"**{len(df_filtered)}** asset(s) found for {chosen_name}.")
 
-    # ── Step 3: Select Assets ─────────────────────────────────────────────────
     step_open(3, "Select Assets",
               "Choose the items from the asset list to include on the form.")
 
     sel_key = f"sel_{chosen_name.lower().replace(' ', '_')}"
-    if sel_key not in st.session_state:
-        st.session_state[sel_key] = {idx: False for idx in df_filtered.index}
-    for idx in df_filtered.index:
-        if idx not in st.session_state[sel_key]:
-            st.session_state[sel_key][idx] = False
+    row_widget_keys = {idx: f"chk_{idx}_{sel_key}" for idx in df_filtered.index}
+
+    for wkey in row_widget_keys.values():
+        if wkey not in st.session_state:
+            st.session_state[wkey] = False
 
     col_a, col_b, _ = st.columns([1, 1, 5])
     with col_a:
         st.markdown('<div class="btn-outline-blue">', unsafe_allow_html=True)
         if st.button("Select All", key="sp_select_all"):
-            for idx in df_filtered.index:
-                st.session_state[sel_key][idx] = True
+            for wkey in row_widget_keys.values():
+                st.session_state[wkey] = True
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with col_b:
         st.markdown('<div class="btn-outline-blue">', unsafe_allow_html=True)
         if st.button("Clear All", key="sp_clear_all"):
-            for idx in df_filtered.index:
-                st.session_state[sel_key][idx] = False
+            for wkey in row_widget_keys.values():
+                st.session_state[wkey] = False
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1925,12 +2802,9 @@ def main():
         desc  = " ".join(parts) if parts else ""
         meta  = "  ·  ".join(p for p in [f"S/N: {sn}" if sn else "", cond] if p)
         label = f"**{tag}**" + (f" — {desc}" if desc else "") + (f"  ·  {meta}" if meta else "")
-        val = st.checkbox(
-            label,
-            value=st.session_state[sel_key].get(idx, False),
-            key=f"chk_{idx}_{sel_key}",
-        )
-        st.session_state[sel_key][idx] = val
+
+        wkey = row_widget_keys[idx]
+        val  = st.checkbox(label, key=wkey)
         if val:
             checked.append(idx)
 
@@ -1938,7 +2812,6 @@ def main():
 
     df_selected = df_filtered.loc[checked].copy()
 
-    # ── Identify selected monitors ────────────────────────────────────────────
     selected_monitors: list[dict] = []
     temp_rows_for_monitors = []
     for _, row in df_selected.iterrows():
@@ -1956,10 +2829,9 @@ def main():
             selected_monitors.append({"label": label, "idx": monitor_counter})
             monitor_counter += 1
 
-    # ── Step 4: Cables & Adapters ─────────────────────────────────────────────
     step_open(4, "Monitor Cables & Adapters",
               "A charger is automatically included. Select cables and adapters for each monitor.")
-    st.markdown('<div class="charger-badge">Charger automatically included</div>', unsafe_allow_html=True)
+    st.markdown('<div class="charger-badge">✅ Charger automatically included</div>', unsafe_allow_html=True)
 
     monitor_cable_assignments: list[dict] = []
     if selected_monitors:
@@ -1969,7 +2841,7 @@ def main():
             monitor_cable_assignments.extend(assignments)
     elif not df_selected.empty:
         st.markdown(
-            '<div style="font-size:0.8rem;color:#5a6e8a;padding:0.4rem 0;">'
+            '<div style="font-size:0.8rem;color:var(--muted);padding:0.4rem 0;">'
             'No monitors in the selected assets — cable section not applicable.'
             '</div>',
             unsafe_allow_html=True,
@@ -1977,7 +2849,6 @@ def main():
 
     step_close()
 
-    # ── Remarks ───────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="remarks-wrap">
       <div class="remarks-label">Remarks</div>
@@ -1991,7 +2862,6 @@ def main():
         key="shared_remarks",
     )
 
-    # ── Build sorted rows ─────────────────────────────────────────────────────
     sorted_rows = sort_assets_by_sequence(
         df_selected, col_map, monitor_cable_assignments, shared_remarks,
     )
@@ -2027,7 +2897,6 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # ── Step 5: Form Details ──────────────────────────────────────────────────
     step_open(5, "Form Details",
               "Header fields for the generated document — auto-filled from the asset data.")
 
@@ -2058,15 +2927,16 @@ def main():
     step_close()
     form_date_str = form_date.strftime("%B %d, %Y")
 
-    # ── Step 6: Generate ──────────────────────────────────────────────────────
     step_open(6, "Generate Document", "")
 
+    copy_label_display = "IT Copy" if copy_type == "it" else "Employee Copy"
     st.markdown(
         f'<div class="info-hint">'
         f'<strong>Prepared by:</strong> {prepared_by} &nbsp;·&nbsp; '
         f'<strong>Employee:</strong> {chosen_name} &nbsp;·&nbsp; '
         f'<strong>Items:</strong> {len(sorted_rows)} &nbsp;·&nbsp; '
-        f'<strong>Form:</strong> {type_label}'
+        f'<strong>Form:</strong> {type_label} &nbsp;·&nbsp; '
+        f'<strong>Copy:</strong> {copy_label_display}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -2087,13 +2957,15 @@ def main():
                     form_name, form_client, form_position, form_date_str,
                     prepared_by=prepared_by,
                     form_type=form_type,
+                    copy_type=copy_type,
                 )
-                st.session_state["docx"]           = docx_bytes
-                st.session_state["form_name"]      = form_name
-                st.session_state["form_client"]    = form_client
-                st.session_state["form_date"]      = form_date
-                st.session_state["prepared_by"]    = prepared_by
-                st.session_state["form_type_used"] = form_type
+                st.session_state["docx"]            = docx_bytes
+                st.session_state["form_name"]       = form_name
+                st.session_state["form_client"]     = form_client
+                st.session_state["form_date"]       = form_date
+                st.session_state["prepared_by"]     = prepared_by
+                st.session_state["form_type_used"]  = form_type
+                st.session_state["copy_type_used"]  = copy_type
                 st.success("Document ready — click Download below.")
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -2103,12 +2975,14 @@ def main():
         _fclient    = st.session_state.get("form_client")    or ""
         _fdate      = st.session_state.get("form_date")      or datetime.now()
         _ftype_used = st.session_state.get("form_type_used") or "wfh"
+        _fcopy_used = st.session_state.get("copy_type_used") or "it"
         _client_p   = f" ({_fclient})" if _fclient else ""
         _day        = str(int(_fdate.strftime("%d")))
         _date_p     = _day + _fdate.strftime(" %B %Y")
         _type_p     = "WFH" if _ftype_used == "wfh" else "On Site"
+        _copy_p     = "IT Copy" if _fcopy_used == "it" else "Employee Copy"
         _filename   = (
-            f"Employee Copy - Equipment Accountability Form ({_type_p})"
+            f"{_copy_p} - Equipment Accountability Form"
             f" - {_fname}{_client_p} _ {_date_p}.docx"
         )
         st.download_button(
@@ -2121,7 +2995,6 @@ def main():
 
     step_close()
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
     st.markdown("<div style='height:.3rem'></div>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Records", f"{len(df):,}")
